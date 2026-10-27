@@ -1,0 +1,8 @@
+	Supported ports: [ TP ]
+	Speed: 1000Mb/s
+	Duplex: Full
+	Auto-negotiation: on
+	Supports Wake-on: pumbg
+	Wake-on: g
+	Link detected: yes
+driver: igb

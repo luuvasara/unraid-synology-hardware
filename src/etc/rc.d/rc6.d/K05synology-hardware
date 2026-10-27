@@ -1,0 +1,5 @@
+#!/bin/sh
+# Shutdown/reboot hook (run by rc.sysvinit before the array is stopped): MCU gets fan 99, 't', LED states.
+RC=${SYNOHW_RC:-/etc/rc.d/rc.synology-hardware}
+[ -x "$RC" ] && "$RC" shutdown
+exit 0

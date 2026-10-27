@@ -1,0 +1,90 @@
+#!/bin/bash
+# rc.synology-hardware - start/stop/status for the DS2415+ hardware daemon (synology-hardware plugin)
+# Written: 2026-10-24. 2026-10-25: syslog logging, 'watchdog' verb for the cron job, macfix no longer
+# runs on every start (post-install and the settings page call 'macfix' explicitly).
+# 2026-10-25c: status exits 0 while the daemon runs even before its first state file exists.
+# 2026-10-25d: 'sweep start [plan] | stop | status' (fan characterisation; the daemon runs it, see synohw-daemon).
+# 2026-10-25g: 'inventory' refreshes the Hardware section cache (synohw-inventory) at once.
+D=${SYNOHW_DIR:-/usr/local/emhttp/plugins/synology-hardware/scripts}
+RUN=${SYNOHW_RUN:-/var/run/synology-hardware}
+TTY=${SYNOHW_TTY:-/dev/ttyS1}
+export SYNOHW_RUN=$RUN
+
+say() { echo "synology-hardware: $*"; logger -t synology-hardware -- "$*" 2>/dev/null; return 0; }
+running() { [ -r "$RUN/pid" ] && kill -0 "$(<"$RUN/pid")" 2>/dev/null; }
+stop_daemon() {   # $1 = shutdown flag
+  mkdir -p "$RUN"; touch "$RUN/stopped"           # deliberate stop: the watchdog leaves it alone
+  running || { echo "synology-hardware: not running"; return 0; }
+  local pid; pid=$(<"$RUN/pid")
+  [ -n "$1" ] && touch "$RUN/shutdown"
+  kill -TERM "$pid"
+  for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  if kill -0 "$pid" 2>/dev/null; then say "daemon $pid did not stop"; return 1; fi
+  rm -f "$RUN/shutdown"; echo "synology-hardware: stopped"
+}
+start_daemon() {
+  running && { echo "synology-hardware: already running (pid $(<"$RUN/pid"))"; return 0; }
+  [ -c "$TTY" ] || { say "$TTY missing (is this a DS2415+ with the 8250 driver?); daemon not started"; return 1; }
+  mkdir -p "$RUN"; rm -f "$RUN/shutdown" "$RUN/stopped"
+  # daemon messages go through synohw_log (logger); stray stderr (bash errors) is piped to syslog too
+  setsid bash -c '"$1" 2>&1 | logger -t synology-hardware' _ "$D/synohw-daemon" </dev/null >/dev/null 2>&1 &
+  for _ in $(seq 1 30); do running && break; sleep 0.1; done
+  running && echo "synology-hardware: started (pid $(<"$RUN/pid"))" || { say "daemon failed to start, see syslog"; return 1; }
+}
+
+# fan sweep: this script only validates the plan and passes a request file to the running daemon (it owns the tty)
+sw_field() { sed -n "s/^$1=//p" "$RUN/sweep.state" 2>/dev/null; }
+sweep_cmd() {
+  local verb=${1:-status} plan d n=0 i
+  shift
+  case "$verb" in
+    start)
+      running || { echo "synology-hardware: daemon not running (start it first)"; return 1; }
+      plan=${*:-20 15 12 10 20 40 70 99}
+      for d in $plan; do
+        [[ $d =~ ^[1-9][0-9]$ ]] || { echo "synology-hardware: bad step '$d': every duty must be an integer 10..99 (never below 10)"; return 2; }
+        n=$((n + 1))
+      done
+      [ "$n" -ge 1 ] && [ "$n" -le 24 ] || { echo "synology-hardware: a plan has 1..24 steps"; return 2; }
+      [ "$(sw_field state)" = running ] && { echo "synology-hardware: a sweep is already running (sweep stop first)"; return 1; }
+      echo "$plan" >"$RUN/sweep.request.tmp" && mv -f "$RUN/sweep.request.tmp" "$RUN/sweep.request" || { echo "synology-hardware: cannot write $RUN/sweep.request"; return 1; }
+      for i in $(seq 1 100); do [ -e "$RUN/sweep.request" ] || break; sleep 0.2; done
+      [ -e "$RUN/sweep.request" ] && { say "sweep request not picked up by the daemon within 20 s"; return 1; }
+      sleep 0.5
+      sweep_cmd status
+      [ "$(sw_field state)" = running ] ;;
+    stop)
+      running || { echo "synology-hardware: daemon not running"; return 1; }
+      [ "$(sw_field state)" = running ] || { echo "synology-hardware: no sweep running"; return 0; }
+      touch "$RUN/sweep.stop"
+      for i in $(seq 1 100); do [ "$(sw_field state)" = running ] || break; sleep 0.2; done
+      sweep_cmd status
+      [ "$(sw_field state)" != running ] ;;
+    status)
+      if [ ! -r "$RUN/sweep.state" ]; then echo "synology-hardware: no sweep since the daemon started"; return 0; fi
+      echo "sweep: $(sw_field state)  step $(sw_field step)/$(sw_field steps)  duty $(sw_field duty) %  plan: $(sw_field plan)"
+      echo "  temps: $(sw_field temps)   samples: $(sw_field samples)   in step: $(sw_field hold) s (hold $(sw_field min_hold)..$(sw_field max_hold) s)"
+      [ -n "$(sw_field reason)" ] && echo "  reason: $(sw_field reason)"
+      echo "  live: $(sw_field csv) $(sw_field summary)"
+      [ -n "$(sw_field result_csv)" ] && echo "  flash copy: $(sw_field result_csv) $(sw_field result_txt)"
+      return 0 ;;
+    *) echo "usage: $0 sweep {start [duty ...]|stop|status}   (duties 10..99; default 20 15 12 10 20 40 70 99)" >&2; return 2 ;;
+  esac
+}
+
+case "$1" in
+  start)    start_daemon ;;
+  stop)     stop_daemon ;;
+  shutdown) stop_daemon yes ;;                      # called from rc6.d/K05synology-hardware at reboot/poweroff
+  restart)  stop_daemon; sleep 1; start_daemon ;;
+  macfix)   "$D/synohw-macfix" ;;                   # write/remove the udev rule, apply live if needed
+  watchdog) # cron (synology-hardware.cron): restart a daemon that died, never one stopped on purpose
+            running && exit 0
+            [ -e "$RUN/stopped" ] && exit 0
+            [ -c "$TTY" ] || exit 0
+            say "watchdog: daemon not running, restarting"; start_daemon ;;
+  sweep)    shift; sweep_cmd "$@" ;;
+  inventory) "$D/synohw-inventory" && cat "$RUN/inventory/at" ;;   # refresh the Hardware section cache now (2026.10.25g)
+  status)   if running; then echo "synology-hardware: running (pid $(<"$RUN/pid"))"; cat "$RUN/state" 2>/dev/null || true; else echo "synology-hardware: not running"; exit 1; fi ;;
+  *) echo "usage: $0 {start|stop|shutdown|restart|macfix|watchdog|status|sweep|inventory}" >&2; exit 2 ;;
+esac

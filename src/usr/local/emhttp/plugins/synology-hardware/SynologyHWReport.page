@@ -1,0 +1,34 @@
+Menu="SynologyHW:5a"
+Title="Report"
+Tag="bug"
+---
+<?php
+/* Report tab (2026.10.26b): "Report unsupported hardware". Collect (include/report.php runs the read-only collector
+ * scripts/synohw-report and anonymises it), preview, Copy, Download, and a link that opens a GitHub issue form in the user's own
+ * browser. Nothing is sent from the NAS; no token is used. */
+?>
+<?php require_once "$docroot/plugins/synology-hardware/include/synohw-page.php"; $P = synohw_page(); $S = $P['s']; $live = $P['live']; $cfg = $P['cfg']; $plugin = "synology-hardware"; synohw_page_head(); ?>
+<script src="/plugins/synology-hardware/js/synohw-report.js?v=<?=synohw_h($S['version'])?>"></script>
+
+<div class="title"><span class="left"><i class="title fa fa-bug"></i>_(Report unsupported hardware)_</span></div>
+
+<p class="whitespace-normal synohw-report-intro">Is your Synology unit not recognised, drawn wrong, or missing a fan, LED or bay? Collect a hardware report here, check it, and send it as a GitHub issue. The report is made on this server, <b>anonymised before you see it</b> (serial numbers, MAC addresses, WWNs, UUIDs, labels, the hostname, IP addresses and user names are replaced by placeholders such as <code>&lt;serial-1&gt;</code>), and it only leaves this server through your own browser, when you copy it, download it or open the issue form.</p>
+
+<div class="synohw-report-bar">
+<input type="button" id="synohw-report-collect" value="Collect report">
+<input type="button" id="synohw-report-copy" value="Copy" disabled>
+<input type="button" id="synohw-report-download" value="Download (.txt)" disabled>
+<input type="button" id="synohw-report-issue" value="Open GitHub issue" disabled>
+<span id="synohw-report-state" class="grey-text" role="status" aria-live="polite">Nothing collected yet.</span>
+</div>
+
+<h3 class="synohw-sub" id="synohw-report-label">Report preview (anonymised; read-only)</h3>
+<textarea id="synohw-report-text" aria-labelledby="synohw-report-label" class="synohw-report-text" readonly spellcheck="false" rows="22" placeholder="Click &quot;Collect report&quot;. It takes a few seconds; no disk is woken."></textarea>
+
+:synohw_report_plug:
+> **What is collected** (read-only, `scripts/synohw-report`): DMI if the BIOS has it, the BIOS version from the Insyde `$BVDT$` block in ACPI table UEFI1, CPU model and microcode, memory size, the host bridge revision (AVR54), `lspci -nn` and `lspci -tvnn`, the SATA port and disk topology from sysfs (model and firmware revision, no serial), the synology_dx driver's registers (port multiplier GSCR, EMID, unique), the serial ports the kernel knows (listed from `/proc/tty/driver/serial`; nothing is written to any tty), hwmon sensors, `lsusb` and `lsusb -t`, network drivers (`ethtool -i`), the RTC battery bit, relevant `dmesg` lines, the plugin and module versions, and this plugin's own view (models, bay map, known issues). No disk is opened: nothing can wake one.
+>
+> **Anonymiser** (`include/synohw-anon.php`): first the values this server knows are replaced (disk, flash, DOM and USB serials, the DOM vender serial, DMI serials and UUID, hostname, users with uid 1000 and up, filesystem labels), then patterns catch the rest (MAC, WWN, UUID, PARTUUID, LABEL=/UUID= values, IPv4, IPv6, "Serial Number:" style fields). The same value always gets the same placeholder. Read the preview before sending; edit the downloaded file if you see anything you would rather not share.
+>
+> **Open GitHub issue** opens `github.com/luuvasara/unraid-synology-hardware/issues/new` with the hardware-report form, the title and the report filled in, in a new browser tab. If the report is too long for a link (about 7000 characters), the form opens with a note instead and the report is downloaded so you can attach the file. You need a GitHub account; nothing is posted until you press Submit there.
+:end

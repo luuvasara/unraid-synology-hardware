@@ -1,0 +1,78 @@
+#!/bin/bash
+# synohw-inventory - cache the hardware facts that need a command for the settings page's Hardware section (2026.10.25g).
+# Written: 2026-10-25. Started by synohw-daemon every INVENTORY_PERIOD (default 600 s, first run right after start) and by
+# 'rc.synology-hardware inventory'. The page itself only READS what this writes (include/synohw-status.php runs no command), so
+# the 5 s live poll stays cheap and nothing on the page can start a disk command.
+# Output, RAM only ($SYNOHW_RUN/inventory, never the flash), each file written as tmp + mv:
+#   smart-<dev>.txt   "# synohw dev=<dev> key=<history key> id=<id> at=<epoch> rc=<smartctl rc>" + the smartctl output, for
+#                     every real disk that Unraid reports AWAKE (synohw_disk_list reading NN or '?'; a '*' = standby disk is
+#                     never queried). smartctl -n standby is used on top: it returns 2 without touching a disk that went to
+#                     standby in between (smartctl(8): "-n standby: check the device unless it is in SLEEP or STANDBY mode").
+#                     USB devices are not in the list (synohw_disk_list skips them). A file of a disk no longer listed is removed.
+#   ethtool-<nic>.txt "# synohw nic=<nic> at=<epoch> rc=<rc>" + `ethtool <nic>` (link, speed, duplex, Wake-on): an ioctl
+#                     read, no link renegotiation.
+#   firmware.txt      (2026.10.26b) key=value: bvdt, bios, bios_board, bios_extra, usb_enum_errors, usb_err (lines), rtc_clock, igb_ports, at
+#   at                epoch of the last complete run, duration, counts.
+# One run at a time (mkdir lock, stale after 300 s). Every smartctl call has a 30 s timeout.
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+. "$HERE/synohw-lib.sh"
+INV=$SYNOHW_RUN/inventory
+SMARTCTL=${SYNOHW_SMARTCTL:-smartctl}
+ETHTOOL=${SYNOHW_ETHTOOL:-ethtool}
+SYSNET=${SYNOHW_SYSNET:-/sys/class/net}
+mkdir -p "$INV" || exit 1
+LOCK=$INV/.lock
+if ! mkdir "$LOCK" 2>/dev/null; then
+  age=$(( EPOCHSECONDS - $(stat -c %Y "$LOCK" 2>/dev/null || echo "$EPOCHSECONDS") ))
+  [ "$age" -lt 300 ] && exit 0                      # another run is busy
+  synohw_log "inventory: removing a stale lock (${age} s old)"
+  rmdir "$LOCK" 2>/dev/null; mkdir "$LOCK" 2>/dev/null || exit 0
+fi
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+t0=$EPOCHSECONDS; n_smart=0; n_skip=0; n_nic=0
+keep=" "
+if list=$(synohw_disk_list); then
+  while read -r key r dev id src; do
+    [ -n "$key" ] || continue
+    [[ $dev =~ ^[a-z0-9]{1,16}$ ]] || continue
+    if [ "$r" = '*' ]; then n_skip=$((n_skip + 1)); continue; fi   # Unraid says standby: never touched
+    keep+="smart-$dev.txt "
+    out=$(timeout 30 "$SMARTCTL" -n standby -i -H -A -l error -l sataphy "/dev/$dev" 2>&1); rc=$?
+    { echo "# synohw dev=$dev key=$key id=$id at=$EPOCHSECONDS rc=$rc"; printf '%s\n' "$out"; } >"$INV/smart-$dev.txt.tmp" \
+      && mv -f "$INV/smart-$dev.txt.tmp" "$INV/smart-$dev.txt"
+    n_smart=$((n_smart + 1))
+  done <<<"$list"
+fi
+for f in "$INV"/smart-*.txt; do
+  [ -e "$f" ] || continue
+  [[ $keep == *" ${f##*/} "* ]] || rm -f "$f"
+done
+for d in "$SYSNET"/*; do
+  [ -e "$d/device" ] || continue                     # physical ports only (eth0..3), not bond0/br0/veth
+  nic=${d##*/}; [[ $nic =~ ^[A-Za-z0-9_.-]{1,15}$ ]] || continue
+  out=$(timeout 10 "$ETHTOOL" "$nic" 2>&1); rc=$?
+  { echo "# synohw nic=$nic at=$EPOCHSECONDS rc=$rc"; printf '%s\n' "$out"; } >"$INV/ethtool-$nic.txt.tmp" && mv -f "$INV/ethtool-$nic.txt.tmp" "$INV/ethtool-$nic.txt"
+  n_nic=$((n_nic + 1))
+done
+# 2026.10.26b: firmware facts for the Known issues and firmware panel (Hardware tab), all read-only:
+#   the BIOS version string from the Insyde $BVDT$ block in ACPI table UEFI1 (root-only file; dmidecode has no SMBIOS entry point on
+#   this unit: research/2026-10-26-firmware-versions.md), USB enumeration errors and the RTC clock line from dmesg (AVR49 / RTC
+#   heuristics, research/2026-10-26-known-hw-issues.md), and the number of igb ports (AVR35).
+UEFI1=${SYNOHW_UEFI1:-/sys/firmware/acpi/tables/UEFI1}; DMESG=${SYNOHW_DMESG:-dmesg}
+fw_clean() { tr -cd 'A-Za-z0-9 ._:/()+,=#-' | cut -c1-200; }
+{
+  if [ -r "$UEFI1" ]; then
+    mapfile -t bv < <(tr '\0' '\n' <"$UEFI1" | sed -n '/^\$BVDT\$$/,/^\$ENDOFBVDT/p' | grep -aE '^\$[A-Za-z0-9._-]+$' | grep -avE '^\$(BVDT|ENDOFBVDT)\$?$' | head -3 | cut -c2-)
+    if [ "${#bv[@]}" -gt 0 ]; then echo "bvdt=ok"; echo "bios=$(fw_clean <<<"${bv[0]}")"; echo "bios_board=$(fw_clean <<<"${bv[1]:-}")"; echo "bios_extra=$(fw_clean <<<"${bv[2]:-}")"
+    else echo "bvdt=nomark"; fi
+  elif [ -e "$UEFI1" ]; then echo "bvdt=unreadable"
+  else echo "bvdt=absent"; fi
+  dm=$(timeout 10 "$DMESG" 2>/dev/null)
+  echo "usb_enum_errors=$(grep -ciE 'device descriptor read/64, error|unable to enumerate USB device' <<<"$dm")"
+  grep -iE 'device descriptor read/64, error|unable to enumerate USB device' <<<"$dm" | head -5 | while IFS= read -r l; do echo "usb_err=$(fw_clean <<<"$l")"; done
+  l=$(grep -m1 -E 'rtc_cmos .*setting system clock to' <<<"$dm"); [ -n "$l" ] && echo "rtc_clock=$(fw_clean <<<"$l")"
+  n=0; for d in "$SYSNET"/*; do [ "$(basename "$(readlink -f "$d/device/driver" 2>/dev/null)")" = igb ] && n=$((n + 1)); done; echo "igb_ports=$n"
+  echo "at=$EPOCHSECONDS"
+} >"$INV/firmware.txt.tmp" && mv -f "$INV/firmware.txt.tmp" "$INV/firmware.txt"
+printf 'at=%s\nduration=%s\nsmart=%s\nskipped_standby=%s\nnics=%s\n' "$EPOCHSECONDS" "$((EPOCHSECONDS - t0))" "$n_smart" "$n_skip" "$n_nic" >"$INV/at.tmp" && mv -f "$INV/at.tmp" "$INV/at"
+exit 0

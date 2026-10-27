@@ -1,0 +1,56 @@
+Menu="SynologyHW:1"
+Title="Overview"
+Tag="tachometer"
+---
+<?php
+/* Overview tab (2026.10.25j): diagram, one card per unit, plugin health. 2026.10.26b: Bay map table + Main page badge setting. */
+?>
+<?php require_once "$docroot/plugins/synology-hardware/include/synohw-page.php"; $P = synohw_page(); $S = $P['s']; $live = $P['live']; $cfg = $P['cfg']; $plugin = "synology-hardware"; synohw_page_head(); ?>
+
+<div class="title"><span class="left"><i class="title fa fa-tachometer"></i>_(At a glance)_</span><span class="synohw-live-state grey-text"><noscript>Live updates need JavaScript; values are from page load.</noscript></span></div>
+
+<?=synohw_live('diagram', 'synohw-diagram-box')?>
+
+<div class="title"><span class="left"><i class="title fa fa-th-list"></i>_(Bay map)_</span></div>
+
+<?=synohw_live('baymap')?>
+
+:synohw_baymap_plug:
+> One row per disk in a bay, the same facts as the tray titles in the drawing: the bay (DS2415+ or DX1215, numbered as Synology does), the device as Unraid's Main page shows it, the Linux name, the Unraid slot (from `/var/local/emhttp/disks.ini`: Parity, Disk N, a pool; from `devs.ini`: unassigned), the temperature Unraid has cached (never read from a disk) and the bay LED as the driver has set it.
+:end
+
+<form markdown="1" name="synohw_badges" method="POST" action="/update.php" target="progressFrame">
+<input type="hidden" name="#file" value="<?=$plugin?>/<?=$plugin?>.cfg">
+
+_(Bay badges on the Main page)_ (MAIN_BADGES):
+: <select name="MAIN_BADGES" aria-label="Bay badges on the Main page (MAIN_BADGES)">
+  <?=mk_option($cfg['MAIN_BADGES'], "yes", "yes: \"DS 1\" / \"DX 8\" next to each disk (default)")?>
+  <?=mk_option($cfg['MAIN_BADGES'], "no", "no")?>
+  </select>
+
+:synohw_badges_plug:
+> Adds a small badge with the unit and bay ("DS 1", "DX 8") after each disk's device name on Unraid's Main page. Visual only: a script on the Main page (loaded through a `Menu="Buttons"` page, the hook Unraid's own Community Applications helper uses) asks this plugin which bay each sdX is in (`include/bays.php`, read-only) and adds the badges. Nothing in Unraid's configuration is written; if the Main page looks different from what the script expects, it adds nothing. Apply saves the key only (no daemon restart); reload the Main page.
+:end
+
+&nbsp;
+: <span class="inline-block"><input type="submit" value="_(Apply)_" disabled><input type="button" value="_(Done)_" onclick="done()"></span>
+</form>
+
+<div class="synohw-cards">
+<section class="synohw-card synohw-card-ds" aria-labelledby="synohw-card-ds-h"><h3 class="synohw-card-title" id="synohw-card-ds-h"><?=synohw_badge('ds', $S, true)?></h3><?=synohw_live('ov_ds')?><p class="synohw-card-more"><a href="#" data-synohw-goto="DS2415+">Every DS2415+ value and setting</a></p></section>
+<section class="synohw-card synohw-card-dx" aria-labelledby="synohw-card-dx-h"><h3 class="synohw-card-title" id="synohw-card-dx-h"><?=synohw_badge('dx', $S, true)?></h3><?=synohw_live('ov_dx')?><p class="synohw-card-more"><a href="#" data-synohw-goto="DX1215">Every DX1215 value and setting</a></p></section>
+</div>
+
+:synohw_overview_plug:
+> **The drawing** is made from the same live values as the tables: each bay shows the disk Unraid reports there (temperature, or standby / no reading), coloured by the band of the fan table that drives that unit (main unit: the running DS2415+ table; expansion unit: DSM's DX1215 table) and labelled in text; Tab moves through the populated bays, each with its full description. Fans turn at a rate taken from the **commanded** level (DS2415+: duty sent, 20 % = one turn in 2.4 s, 99 % = 0.48 s; DX1215: low 2 s, middle 1.2 s, full 0.6 s); neither unit reports an RPM. A fan with its alarm bit set is drawn stopped and red. The network wires and the expansion cable move while there is a link. With "reduce motion" set in the operating system, all of it moves 4 times slower instead of stopping.
+>
+> **Only the DS2415+ and the DX1215 are drawn.** Any other unit gets a plain picture with its name and the same values in the cards and tables. The main unit is recognised by its PCI controllers (no model string is read); the expansion unit by the model and unique ID that the synology_dx module reads from it.
+>
+> **Bay numbers are confirmed** at the box by blink count (2026-10-26, `experiments/2026-10-26-bay-map/RESULT.md`). Main unit: bay = 4 x controller index (88SE9215 03:00.0, 05:00.0, 06:00.0) + port + 1, as DSM's disk index map says (`DiskIdxMap=1b1f0004080c`); the Seagate on 03:00.0 port 0 is in bay 1. DX1215: bay = 3 x EMID + port multiplier port + 1; the WD on the EMID 2 port multiplier, port 1, is in bay 8.
+>
+> **Tray LEDs** show what the synology_dx driver has set: green = presence/activity (the controllers drive it once the LEDs are on), orange = fault from disk health (this plugin's daemon), an empty ring = off. Details and the table per bay: DS2415+ and DX1215 tabs, Bay LEDs.
+:end
+
+<div class="title"><span class="left"><i class="title fa fa-heartbeat"></i>_(Plugin health)_</span></div>
+
+<?=synohw_live('health')?>

@@ -1,0 +1,56 @@
+#!/bin/bash
+# synohw-vender - decode the Synology 'vender' file (DOM partition 2). READ-ONLY.
+# Written: 2026-10-24. Layout (measured on this unit, matches stage1/init dsm_boot):
+#   offset 0..27: 4 x (6-byte MAC + 1 check byte; the check byte is 0x20+index here), 00-padded
+#   offset 32:    "SN=<serial>,CHK=<n>"
+# Usage: synohw-vender decode <file>   -> prints "mac <n> <aa:bb:..>" lines and "sn <serial>"
+#        synohw-vender find            -> mounts the DOM (USB f400:f400) read-only, decodes, unmounts
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+. "$HERE/synohw-lib.sh"
+SYSUSB=${SYNOHW_SYSUSB:-/sys/bus/usb/devices}
+
+decode() {
+  local f=$1 i hex mac chk n=0
+  [ -r "$f" ] || { echo "cannot read $f" >&2; return 1; }
+  for i in 0 1 2 3; do
+    hex=$(od -A n -t x1 -j $((i * 7)) -N 7 "$f" | tr -d ' \n')
+    [ ${#hex} -eq 14 ] || { echo "short vender file" >&2; return 1; }
+    mac=${hex:0:12}; chk=${hex:12:2}
+    [ "$mac" = 000000000000 ] && continue
+    # reject multicast / all-ff; warn (not fail) if the check byte is not the expected 0x20+i
+    if [ $((0x${mac:0:2} & 1)) -eq 1 ] || [ "$mac" = ffffffffffff ]; then echo "bad MAC $mac" >&2; return 1; fi
+    [ "$chk" = "$(printf '%02x' $((0x20 + i)))" ] || echo "warning: check byte $chk for mac $i (expected $(printf '%02x' $((0x20 + i))))" >&2
+    echo "mac $i ${mac:0:2}:${mac:2:2}:${mac:4:2}:${mac:6:2}:${mac:8:2}:${mac:10:2}"
+    n=$((n + 1))
+  done
+  [ $n -gt 0 ] || { echo "no MAC in $f" >&2; return 1; }
+  dd if="$f" bs=1 skip=32 count=64 2>/dev/null | tr -d '\0' | sed -n 's/^SN=\([^,]*\).*/sn \1/p'
+}
+
+# DOM = USB device 0xf400:0xf400. Never writes: partition is set read-only and mounted ro,noexec.
+find_vender() {
+  local d blk part tmp rc=1
+  for d in "$SYSUSB"/*; do
+    [ -r "$d/idVendor" ] && [ "$(<"$d/idVendor")" = f400 ] && [ "$(<"$d/idProduct")" = f400 ] || continue
+    for blk in "${SYNOHW_SYSBLOCK:-/sys/block}"/sd*; do
+      case "$(readlink -f "$blk/device")" in "$(readlink -f "$d")"/*) ;; *) continue ;; esac
+      part=/dev/${blk##*/}2
+      [ -b "$part" ] || continue
+      blockdev --setro "$part" || { echo "cannot set $part read-only; refusing" >&2; return 1; }
+      tmp=$(mktemp -d /tmp/synohw-dom.XXXXXX) || return 1
+      if mount -t vfat -o ro,noexec,nosuid,nodev "$part" "$tmp"; then
+        decode "$tmp/vender"; rc=$?
+        umount "$tmp"
+      else echo "mount of $part failed" >&2; fi
+      rmdir "$tmp"
+      return $rc
+    done
+  done
+  echo "no DOM (USB f400:f400) found" >&2; return 1
+}
+
+case "$1" in
+  decode) decode "$2" ;;
+  find) find_vender ;;
+  *) echo "usage: $0 decode <file> | find" >&2; exit 2 ;;
+esac

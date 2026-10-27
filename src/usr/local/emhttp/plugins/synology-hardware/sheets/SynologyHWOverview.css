@@ -1,0 +1,239 @@
+/* synology-hardware page sheet (loaded by Unraid's PageBuilder.php:139-146 includePageStylesheets).
+   2026.10.25j: the page is tabbed (SynologyHW.page = header-only xmenu parent, like dynamix PowerMode.page). Unraid loads
+   sheets/<name>.css for every page in $pages (DefaultPageLayout.php:160-163), and a parent without text is not in $pages
+   (:53-58), so this sheet is named after the first tab, SynologyHWOverview.page, and styles every tab.
+   Layout only for the existing blocks: their colours come from the dynamix theme and its classes. 2026.10.25b, temps table fit 2026.10.25d.
+   2026.10.25k: the Overview diagram's front/rear panel parts (after Synology's installation guides).
+   2026.10.25f: the history graphs need series colours the theme does not have; they are tokens at the end of this file. */
+/* dynamix sets table cells to one 2.6rem line (default-base.css); cells that wrap get normal leading */
+table.unraid td.whitespace-normal { line-height: 1.5; padding-top: .4rem; padding-bottom: .4rem; }
+/* the stacked key/value tables (daemon, plugin, MCU, running configuration) share one label column */
+table.synohw-kv td:first-child { width: 16rem; }
+/* a grid item's automatic minimum is its content width, so a wide live table would push the dd past the
+   content edge (where it is clipped); min-width 0 lets dynamix's TableContainer scroll it instead */
+dl dd:has(> div > .TableContainer--no-min-width) { min-width: 0; }
+/* the all-sensors table has 7 columns with long cells ("no reading (spun up, temp=...): fan floor 70 %"); on dynamix's
+   nowrap cells it was 943 px in a 903 px container at 1440 px wide, so the last column ran past the edge and was clipped.
+   Let the cells wrap and keep the table within its container (measured in the real webGui 2026-10-25). */
+table.unraid.synohw-temps { width: 100%; max-width: 100%; }
+table.unraid.synohw-temps td, table.unraid.synohw-temps th { white-space: normal !important; overflow-wrap: break-word; line-height: 1.5; padding-top: .4rem; padding-bottom: .4rem; }
+/* Numbers and short headers never split mid-value ("33 °C", "Samples"); measured: overflow-wrap:anywhere broke them at 1280 px. */
+table.unraid.synohw-sensors td:nth-child(n+3):nth-child(-n+6) { white-space: nowrap !important; }
+
+/* Hardware section (2026.10.25g): wide tables wrap inside their container; numbers and short values stay on one line */
+.synohw-hw-title { font-size: 1.3rem; font-weight: bold; margin: 1.6rem 0 .4rem 0; }
+.synohw-hw-box > .synohw-hw-title:first-child { margin-top: .4rem; }
+table.unraid.synohw-hw { width: 100%; max-width: 100%; }
+/* both boxes' fans (2026.10.25h): the reason column wraps */
+table.unraid.synohw-fans { width: 100%; max-width: 100%; }
+table.unraid.synohw-fans td { white-space: normal !important; line-height: 1.5; padding-top: .4rem; padding-bottom: .4rem; vertical-align: top; }
+table.unraid.synohw-hw td { white-space: normal !important; overflow-wrap: break-word; line-height: 1.5; padding-top: .4rem; padding-bottom: .4rem; vertical-align: top; }
+table.unraid.synohw-hw-cores td:nth-child(-n+5), table.unraid.synohw-hw-pci td:first-child, table.unraid.synohw-hw-ata td:nth-child(3),
+table.unraid.synohw-hw-cstates td:nth-child(n+2), table.unraid.synohw-hw-tis td, table.unraid.synohw-hw-usb td:nth-child(4) { white-space: nowrap !important; }
+details.synohw-more { margin: .6rem 0; }
+details.synohw-more > summary { cursor: pointer; min-height: 24px; line-height: 24px; }
+
+/* ---- history graphs (2026.10.25f) ----
+   Tokens: the ONLY colour values used by js/synohw-charts.js (it reads them with getComputedStyle). Primitives are the
+   dataviz reference palette's categorical steps (light / dark columns), validated 2026-10-25 with validate_palette.js
+   against the Unraid surfaces they render on: dark #1d1b1b (black theme --background-color = --gray-900) ALL PASS
+   (worst adjacent CVD dE 8.4, normal 19.3, all >= 3:1); light #f2f2f2 (white theme --gray-100) PASS with a contrast WARN
+   for slots 2-5 (< 3:1), relieved by the legend table, the tooltip and the sensor tables (values never by colour alone).
+   The scheme is chosen by the script from the page's real background colour (data-synohw-scheme), so every Unraid theme
+   (black, gray, white, azure) gets the matching set. */
+:root {
+  --synohw-font: clear-sans, sans-serif;
+  --synohw-series-1: #3987e5; --synohw-series-2: #d95926; --synohw-series-3: #199e70; --synohw-series-4: #c98500;
+  --synohw-series-5: #d55181; --synohw-series-6: #008300; --synohw-series-7: #9085e9; --synohw-series-8: #e66767;
+  --synohw-series-other: #8a8983;
+  --synohw-ink: var(--text-color, #f2f2f2);
+  --synohw-ink-muted: #b9b8ae;
+  --synohw-grid: #34322f;
+  --synohw-threshold: #77756d;
+  --synohw-alert: #d03b3b;
+  --synohw-alert-text: #ef7a7a;
+  --synohw-warn-text: #e68a00;   /* = dynamix .orange-text, 6.5:1 on #1d1b1b */
+  --synohw-sweep-band: rgba(57, 135, 229, 0.12);
+  --synohw-alarm-band: rgba(208, 59, 59, 0.18);   /* DX1215 fan alarm periods on the DX level chart (2026.10.25h) */
+  --synohw-tip-bg: #2a2826;
+  --synohw-tip-border: #4a4844;
+  /* 2026.10.25j: box identity (badge accent, card edge, unit outline; always next to the unit's name), the diagram, temperature bands.
+     Bands = the dataviz reference status palette (fixed in both modes, always with a label in the bay's text and in the key). */
+  --synohw-box-ds: #3987e5; --synohw-box-dx: #9085e9;
+  --synohw-card-border: #3a3836; --synohw-card-bg: #211f1e;
+  --synohw-unit-fill: #232120; --synohw-unit-stroke: #6a685f; --synohw-bay-fill: #2e2c2a; --synohw-fan: #b9b8ae;
+  --synohw-link: #3987e5; --synohw-focus: #f2f2f2;
+  --synohw-band-cool: #0ca30c; --synohw-band-warm: #fab219; --synohw-band-hot: #ec835a; --synohw-band-alert: #d03b3b; --synohw-band-standby: #8a8983;
+  --synohw-ok-text: #7cc644; --synohw-link-text: #7fa8f0;   /* dynamix #4f8a10 / #486dba are 3.6 / 3.3:1 here (axe, 25j) */
+  /* 2026.10.25k: panel details (power button blue as on the units, ALERT red, fan module, recess) */
+  --synohw-led-blue: #4b93ec; --synohw-led-red: #e5484d; --synohw-fanplate: #1a1918; --synohw-recess: #2a2826;
+}
+:root[data-synohw-scheme="light"] {
+  --synohw-series-1: #2a78d6; --synohw-series-2: #eb6834; --synohw-series-3: #1baf7a; --synohw-series-4: #eda100;
+  --synohw-series-5: #e87ba4; --synohw-series-6: #008300; --synohw-series-7: #6250d6; --synohw-series-8: #e34948;
+  --synohw-series-other: #898781;
+  --synohw-ink: var(--text-color, #1d1b1b);
+  --synohw-ink-muted: #52514e;
+  --synohw-grid: #dcdbd4;
+  --synohw-threshold: #898781;
+  --synohw-alert: #d03b3b;
+  --synohw-alert-text: #a72626;
+  --synohw-warn-text: #8f5100;   /* 5.1:1 on #e8e8e8; dynamix #e68a00 is 2.1:1 on the white theme striped rows (axe, 25g) */
+  --synohw-sweep-band: rgba(42, 120, 214, 0.10);
+  --synohw-alarm-band: rgba(208, 59, 59, 0.14);
+  --synohw-tip-bg: #ffffff;
+  --synohw-tip-border: #c3c2b7;
+  --synohw-box-ds: #2a78d6; --synohw-box-dx: #6250d6;
+  --synohw-card-border: #d4d3cb; --synohw-card-bg: #fafaf8;
+  --synohw-unit-fill: #ffffff; --synohw-unit-stroke: #8f8e86; --synohw-bay-fill: #f1f1ed; --synohw-fan: #5f5e59;
+  --synohw-link: #2a78d6; --synohw-focus: #1d1b1b;
+  --synohw-band-cool: #0ca30c; --synohw-band-warm: #fab219; --synohw-band-hot: #ec835a; --synohw-band-alert: #d03b3b; --synohw-band-standby: #898781;
+  --synohw-ok-text: #2f6b0c; --synohw-link-text: #2a5aa8;
+  --synohw-led-blue: #2a78d6; --synohw-led-red: #d03b3b; --synohw-fanplate: #e4e3dd; --synohw-recess: #ecebe6;
+}
+.synohw-graphs { margin: 0 0 1.6rem 0; }
+.synohw-graph-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem 2.4rem; margin: .4rem 0 .8rem 0; }
+.synohw-graph-bar label { display: inline-flex; align-items: center; gap: .4rem; cursor: pointer; min-height: 24px; }
+.synohw-range { display: inline-flex; align-items: center; gap: 1.2rem; border: 0; margin: 0; padding: 0; }
+.synohw-range legend { float: left; margin-right: 1.2rem; padding: 0; }
+.synohw-chart-title { font-size: 1.3rem; font-weight: normal; margin: 1.2rem 0 .4rem 0; color: var(--synohw-ink); }
+.synohw-chart { position: relative; width: 100%; }
+.synohw-chart:focus-visible { outline: 2px solid var(--synohw-series-1); outline-offset: 2px; }
+.synohw-chart .u-over { cursor: crosshair; }
+.synohw-tip { position: absolute; z-index: 5; display: none; pointer-events: none; max-width: 32rem; padding: .6rem .8rem;
+  line-height: 1.5; font-size: 1.2rem; width: max-content; white-space: normal; color: var(--synohw-ink);
+  background: var(--synohw-tip-bg); border: 1px solid var(--synohw-tip-border); border-radius: 4px; }
+.synohw-swatch { vertical-align: middle; margin-right: .6rem; }
+table.unraid.synohw-legend { width: 100%; margin-top: .8rem; }
+table.unraid.synohw-legend td:first-child { width: 4rem; text-align: center; }
+table.unraid.synohw-legend td.synohw-val { white-space: nowrap; font-variant-numeric: tabular-nums; }
+table.unraid.synohw-legend label { cursor: pointer; }
+.synohw-sweep-legend { list-style: none; display: flex; flex-wrap: wrap; gap: .4rem 1.6rem; margin: .6rem 0; padding: 0; }
+dl dd:has(> #synohw-sweep-box) { min-width: 0; }   /* the sweep graphs follow the dd width instead of pushing it */
+/* dynamix .grey-text is #808080 = 4.34:1 on the black theme's #1d1b1b (axe color-contrast, 2026-10-25); inside the graph blocks
+   the muted chart ink is used instead (8.6:1 dark, 7.1:1 light) */
+.synohw-graphs .grey-text, .synohw-hw-box .grey-text, .synohw-tab .grey-text, .tab-content .grey-text, .synohw-card .grey-text { color: var(--synohw-ink-muted); }   /* + Hardware (25g), every tab (25j) */
+.synohw-hw-box .orange-text, .tab-content .orange-text, .synohw-card .orange-text { color: var(--synohw-warn-text); }
+/* 2026.10.25j: the dynamix green / red text and link colours are below 4.5:1 on the table rows (axe); inside the tabs the tokens are used */
+.tab-content .green-text { color: var(--synohw-ok-text); }
+.tab-content .red-text { color: var(--synohw-alert-text); }
+.tab-content a:not(.button) { color: var(--synohw-link-text); text-decoration: underline; }   /* links inside text: not by colour alone (axe link-in-text-block) */
+
+/* ---- 2026.10.25j: tabs, box badges, Overview cards, the hardware diagram ---- */
+/* box badge: icon + name in text; the accent is the left edge and the icon only */
+.synohw-icon { width: 1.5rem; height: 1.5rem; flex: none; vertical-align: -0.25rem; }
+.synohw-badge { display: inline-flex; align-items: center; gap: .4rem; padding: .1rem .7rem .1rem .5rem; margin: 0 .2rem; border: 1px solid var(--synohw-card-border);
+  border-left: 4px solid var(--synohw-box-ds); border-radius: 3px; font-size: 1.2rem; line-height: 1.6; letter-spacing: normal; text-transform: none;
+  white-space: nowrap; color: var(--synohw-ink); vertical-align: middle; font-weight: bold; }
+.synohw-badge .synohw-icon { color: var(--synohw-box-ds); }
+.synohw-badge-dx { border-left-color: var(--synohw-box-dx); }
+.synohw-badge-dx .synohw-icon { color: var(--synohw-box-dx); }
+.synohw-badge-unknown { border-left-color: var(--synohw-band-standby); font-weight: normal; }
+.synohw-badge-role { font-weight: normal; color: var(--synohw-ink-muted); }
+div.title .synohw-badge { font-size: 1.2rem; margin-left: .8rem; }
+/* Overview cards: side by side, stacked when narrow */
+.synohw-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 42rem), 1fr)); gap: 1.6rem; margin: 1.2rem 0 2rem 0; }
+.synohw-card { border: 1px solid var(--synohw-card-border); border-top: 4px solid var(--synohw-box-ds); border-radius: 6px; padding: .8rem 1.2rem 1rem 1.2rem;
+  background: var(--synohw-card-bg); min-width: 0; }
+.synohw-card-dx { border-top-color: var(--synohw-box-dx); }
+.synohw-card-title { margin: .2rem 0 .6rem 0; font-size: 1.4rem; }
+.synohw-card-title .synohw-badge { font-size: 1.4rem; margin-left: 0; }
+table.unraid.synohw-card-kv { width: 100%; }
+table.unraid.synohw-card-kv td:first-child { width: 12rem; white-space: nowrap; color: var(--synohw-ink-muted); }
+table.unraid.synohw-card-kv td { line-height: 1.5; padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
+.synohw-card-more { margin: .8rem 0 0 0; }
+.synohw-card-more a { display: inline-block; min-height: 24px; line-height: 24px; }
+.synohw-verdict { margin: .4rem 0 .8rem 0; line-height: 1.5; }
+.synohw-sub { font-size: 1.3rem; font-weight: bold; margin: 1.6rem 0 .4rem 0; }
+/* the diagram: inline SVG; every colour is a token; nothing is conveyed by colour or motion alone (text in each bay, labels) */
+.synohw-diagram-wrap { width: 100%; overflow-x: auto; }
+.synohw-diagram { display: block; width: 100%; max-width: 150rem; min-width: 80rem; height: auto; font-family: var(--synohw-font); }
+.synohw-diagram text { fill: var(--synohw-ink); font-size: 12px; }
+.synohw-diagram .synohw-svg-title { font-size: 15px; font-weight: bold; }
+.synohw-diagram .synohw-svg-muted { fill: var(--synohw-ink-muted); font-size: 11px; }
+.synohw-diagram .synohw-svg-small { font-size: 10px; }
+.synohw-diagram .synohw-svg-alert { fill: var(--synohw-alert-text); font-weight: bold; }
+.synohw-diagram .synohw-svg-temp { font-size: 13px; font-weight: bold; }
+.synohw-diagram .synohw-svg-tiny { font-size: 9px; letter-spacing: .02em; }
+.synohw-unit { fill: var(--synohw-unit-fill); stroke: var(--synohw-unit-stroke); stroke-width: 1.5; }
+.synohw-unit-ds > .synohw-unit { stroke: var(--synohw-box-ds); stroke-width: 2; }
+.synohw-unit-dx > .synohw-unit { stroke: var(--synohw-box-dx); stroke-width: 2; }
+.synohw-unit-absent .synohw-unit { fill: none; stroke-dasharray: 6 5; }
+.synohw-slot { fill: var(--synohw-bay-fill); stroke: var(--synohw-unit-stroke); }
+.synohw-divider { stroke: var(--synohw-grid); stroke-dasharray: 3 4; }
+.synohw-bay-body { fill: var(--synohw-bay-fill); stroke: var(--synohw-unit-stroke); }
+.synohw-bay-empty rect { fill: none; stroke: var(--synohw-unit-stroke); stroke-dasharray: 4 3; }
+.synohw-bay[tabindex] { cursor: help; outline: none; }
+.synohw-bay[tabindex]:hover .synohw-bay-body, .synohw-bay[tabindex]:focus-visible .synohw-bay-body { stroke: var(--synohw-focus); stroke-width: 3; }
+.synohw-band-cool .synohw-bay-bar, .synohw-key.synohw-band-cool { fill: var(--synohw-band-cool); }
+.synohw-band-warm .synohw-bay-bar, .synohw-key.synohw-band-warm { fill: var(--synohw-band-warm); }
+.synohw-band-hot .synohw-bay-bar, .synohw-key.synohw-band-hot { fill: var(--synohw-band-hot); }
+.synohw-band-alert .synohw-bay-bar, .synohw-key.synohw-band-alert { fill: var(--synohw-band-alert); }
+.synohw-band-standby .synohw-bay-bar, .synohw-key.synohw-band-standby { fill: var(--synohw-band-standby); }
+.synohw-band-noread .synohw-bay-bar, .synohw-key.synohw-band-noread { fill: none; stroke: var(--synohw-band-warm); stroke-width: 2; stroke-dasharray: 3 2; }
+.synohw-fan-ring { fill: var(--synohw-bay-fill); stroke: var(--synohw-unit-stroke); stroke-width: 1.5; }
+.synohw-fan-rotor { transform-box: fill-box; transform-origin: center; }
+.synohw-fan-rotor path { fill: var(--synohw-fan); }
+.synohw-fan-hub { fill: var(--synohw-unit-stroke); }
+.synohw-hit { fill: transparent; }
+.synohw-fan-idle .synohw-fan-rotor path { fill: var(--synohw-band-standby); }
+.synohw-fan-alarm .synohw-fan-ring { stroke: var(--synohw-alert); stroke-width: 3; }
+.synohw-fan-alarm .synohw-fan-rotor path { fill: var(--synohw-alert); }
+.synohw-port { fill: var(--synohw-bay-fill); stroke: var(--synohw-unit-stroke); }
+.synohw-port-notch { fill: var(--synohw-unit-stroke); }
+.synohw-led-green { fill: var(--synohw-band-cool); }
+.synohw-led-orange { fill: var(--synohw-band-hot); }
+.synohw-led-off { fill: none; stroke: var(--synohw-ink-muted); stroke-width: 1.5; }
+/* 2026.10.25k panel parts */
+.synohw-led-red { fill: var(--synohw-led-red); }
+.synohw-led-blue-stroke { fill: none; stroke: var(--synohw-led-blue); stroke-width: 1.8; stroke-linecap: round; }
+.synohw-led-off-stroke { fill: none; stroke: var(--synohw-ink-muted); stroke-width: 1.5; stroke-linecap: round; }
+.synohw-led-blank { fill: var(--synohw-fanplate); stroke: var(--synohw-unit-stroke); stroke-width: .8; }
+.synohw-lock { fill: var(--synohw-unit-fill); stroke: var(--synohw-unit-stroke); stroke-width: 1.2; }
+.synohw-bay-empty .synohw-lock { stroke-dasharray: none; fill: none; }
+.synohw-recess { fill: var(--synohw-recess); stroke: var(--synohw-grid); }
+.synohw-fanplate { fill: var(--synohw-fanplate); stroke: var(--synohw-unit-stroke); }
+.synohw-console { fill: var(--synohw-bay-fill); stroke: var(--synohw-led-blue); stroke-width: 1.2; }
+.synohw-pin { fill: var(--synohw-fanplate); stroke: var(--synohw-unit-stroke); }
+.synohw-switch-knob { fill: none; stroke: var(--synohw-ink-muted); stroke-dasharray: 2 1.5; }
+.synohw-wire { fill: none; stroke: var(--synohw-link); stroke-width: 2; }
+.synohw-cable { fill: none; stroke-width: 5; stroke-linecap: round; }
+.synohw-cable-up { stroke: var(--synohw-link); }
+.synohw-cable-down { stroke: var(--synohw-band-standby); stroke-dasharray: 2 9; }
+.synohw-flow { stroke-dasharray: 6 6; animation: synohw-flow var(--synohw-spin, 1.2s) linear infinite; }
+.synohw-spin { animation: synohw-spin var(--synohw-spin, 1s) linear infinite; }
+.synohw-blink { animation: synohw-blink var(--synohw-spin, 1s) step-end infinite; }
+@keyframes synohw-spin { to { transform: rotate(360deg); } }
+@keyframes synohw-flow { to { stroke-dashoffset: -24; } }
+@keyframes synohw-blink { 50% { fill: none; } }
+.synohw-diagram-legend { list-style: none; display: flex; flex-wrap: wrap; gap: .4rem 1.6rem; margin: .6rem 0 .2rem 0; padding: 0; }
+.synohw-diagram-legend li { display: inline-flex; align-items: center; gap: .6rem; }
+.synohw-diagram-note { margin-top: .2rem; }
+/* 2026.10.26b: Bay map, Known issues, Report tab */
+table.unraid.synohw-baymap, table.unraid.synohw-issues { width: 100%; max-width: 100%; }
+table.unraid.synohw-baymap td, table.unraid.synohw-issues td { line-height: 1.5; padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
+table.unraid.synohw-issues td { white-space: normal !important; }
+table.unraid.synohw-issues td:first-child { width: 26%; }
+table.unraid.synohw-issues td:nth-child(2) { width: 20%; }
+.synohw-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.synohw-report-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem 1.2rem; margin: 1.2rem 0; }
+.synohw-report-bar input[type="button"] { margin: 0; }
+.synohw-report-text { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 32rem; font-family: ui-monospace, 'DejaVu Sans Mono', monospace; font-size: 1.2rem; line-height: 1.45;
+  color: var(--synohw-ink); background: var(--synohw-card-bg); border: 1px solid var(--synohw-card-border); border-radius: 4px; padding: .8rem; white-space: pre; overflow: auto; resize: vertical; }
+.synohw-report-text:focus-visible { outline: 2px solid var(--synohw-focus); outline-offset: 2px; }
+.synohw-report-intro { max-width: 110rem; }
+/* chart sections in the History tab */
+.synohw-hist-section { margin-top: 1.6rem; padding-left: 1.2rem; border-left: 4px solid var(--synohw-box-ds); }
+.synohw-hist-section-dx { border-left-color: var(--synohw-box-dx); }
+/* Canonical reduced-motion block (ui-work skill, Rule 4), scoped to this plugin's elements. The motion that carries meaning
+   (a fan turning at its commanded level, the link flow, a blinking alert LED) is slowed 4x, never frozen; a stopped fan is
+   also red and labelled, so it never depends on motion alone. */
+@media (prefers-reduced-motion: reduce) {
+  [class*="synohw-"], [class*="synohw-"] *, [class*="synohw-"]::before, [class*="synohw-"]::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .synohw-anim { animation-duration: calc(var(--synohw-spin, 1s) * 4) !important; animation-iteration-count: infinite !important; }
+}

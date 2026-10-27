@@ -1,0 +1,32 @@
+name: Hardware report
+description: A Synology unit or part that the plugin does not recognise, draws wrong or cannot control. Made with the plugin's Report tab.
+title: "Hardware report: "
+labels: ["hardware-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The Report tab (Settings, Utilities, Synology Hardware, Report) fills in the report below and anonymises it on your server before it reaches this page.
+        Please read it once more before you submit: serial numbers, MAC addresses, WWNs, UUIDs, labels, the hostname, IP addresses and user names should all show as placeholders such as `<serial-1>`.
+  - type: input
+    id: model
+    attributes:
+      label: Synology model(s)
+      description: Main unit and expansion unit(s), as printed on the label, e.g. "DS1815+ with DX513".
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is missing or wrong?
+      description: e.g. "the unit is not recognised", "bay 3 is shown in the wrong place", "the rear fan does not respond".
+    validations:
+      required: true
+  - type: textarea
+    id: body
+    attributes:
+      label: Hardware report
+      description: Filled in by the plugin. If the report was too long for a link, attach the downloaded synology-hardware-report-*.txt here instead.
+      render: text
+    validations:
+      required: true

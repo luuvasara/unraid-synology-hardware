@@ -1,0 +1,64 @@
+smartctl 7.5 2025-04-30 r5714 [x86_64-linux-6.18.58-Unraid] (local build)
+Copyright (C) 2002-25, Bruce Allen, Christian Franke, www.smartmontools.org
+
+=== START OF INFORMATION SECTION ===
+Model Family:     Western Digital Black
+Device Model:     WDC WD1003FZEX-00MK2A0
+Serial Number:    WD-WCC0000FAKE1
+LU WWN Device Id: 5 0014ee 2600000001
+Firmware Version: 01.01A01
+User Capacity:    1,000,204,886,016 bytes [1.00 TB]
+Sector Sizes:     512 bytes logical, 4096 bytes physical
+Rotation Rate:    7200 rpm
+Device is:        In smartctl database 7.5/6293
+ATA Version is:   ACS-2, ACS-3 T13/2161-D revision 3b
+SATA Version is:  SATA 3.1, 6.0 Gb/s (current: 6.0 Gb/s)
+Local Time is:    Sun Oct 25 13:48:47 2026 UTC
+SMART support is: Available - device has SMART capability.
+SMART support is: Enabled
+Power mode is:    ACTIVE or IDLE
+
+=== START OF READ SMART DATA SECTION ===
+SMART overall-health self-assessment test result: PASSED
+
+SMART Attributes Data Structure revision number: 16
+Vendor Specific SMART Attributes with Thresholds:
+ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_FAILED RAW_VALUE
+  1 Raw_Read_Error_Rate     0x002f   200   200   051    Pre-fail  Always       -       0
+  3 Spin_Up_Time            0x0027   175   169   021    Pre-fail  Always       -       2233
+  4 Start_Stop_Count        0x0032   094   094   000    Old_age   Always       -       6065
+  5 Reallocated_Sector_Ct   0x0033   200   200   140    Pre-fail  Always       -       0
+  7 Seek_Error_Rate         0x002e   200   200   000    Old_age   Always       -       0
+  9 Power_On_Hours          0x0032   068   068   000    Old_age   Always       -       23459
+ 10 Spin_Retry_Count        0x0032   100   100   000    Old_age   Always       -       0
+ 11 Calibration_Retry_Count 0x0032   100   100   000    Old_age   Always       -       0
+ 12 Power_Cycle_Count       0x0032   095   095   000    Old_age   Always       -       5989
+192 Power-Off_Retract_Count 0x0032   200   200   000    Old_age   Always       -       213
+193 Load_Cycle_Count        0x0032   198   198   000    Old_age   Always       -       6016
+194 Temperature_Celsius     0x0022   115   104   000    Old_age   Always       -       28
+196 Reallocated_Event_Count 0x0032   200   200   000    Old_age   Always       -       0
+197 Current_Pending_Sector  0x0032   200   200   000    Old_age   Always       -       0
+198 Offline_Uncorrectable   0x0030   200   200   000    Old_age   Offline      -       0
+199 UDMA_CRC_Error_Count    0x0032   200   200   000    Old_age   Always       -       0
+200 Multi_Zone_Error_Rate   0x0008   200   200   000    Old_age   Offline      -       0
+
+SMART Error Log Version: 1
+No Errors Logged
+
+SATA Phy Event Counters (GP Log 0x11)
+ID      Size     Value  Description
+0x0001  2            0  Command failed due to ICRC error
+0x0002  2            0  R_ERR response for data FIS
+0x0003  2            0  R_ERR response for device-to-host data FIS
+0x0004  2            0  R_ERR response for host-to-device data FIS
+0x0005  2            0  R_ERR response for non-data FIS
+0x0006  2            0  R_ERR response for device-to-host non-data FIS
+0x0007  2            0  R_ERR response for host-to-device non-data FIS
+0x0008  2            0  Device-to-host non-data FIS retries
+0x0009  2          120  Transition from drive PhyRdy to drive PhyNRdy
+0x000a  2          241  Device-to-host register FISes sent due to a COMRESET
+0x000b  2            0  CRC errors within host-to-device FIS
+0x000f  2            0  R_ERR response for host-to-device data FIS, CRC
+0x0012  2            0  R_ERR response for host-to-device non-data FIS, CRC
+0x8000  4       168500  Vendor specific
+

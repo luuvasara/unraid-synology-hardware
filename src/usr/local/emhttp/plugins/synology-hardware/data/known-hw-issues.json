@@ -1,0 +1,155 @@
+{
+  "written": "2026-10-26",
+  "doc": "research/2026-10-26-known-hw-issues.md",
+  "model_groups": {
+    "avoton": ["DS415+", "DS1515+", "DS1815+", "DS2415+", "RS815+", "RS815RP+", "RS2416+", "RS2416RP+"],
+    "apollolake": ["DS918+", "DS718+", "DS418play", "DS218+", "DS620slim"]
+  },
+  "issues": [
+    {
+      "id": "avr54",
+      "title": "Atom C2000 LPC clock failure: unit may never boot again",
+      "models": "avoton",
+      "severity": "critical",
+      "detect": {
+        "type": "pci_revision",
+        "device": "0000:00:00.0",
+        "vendor_device": "8086:1f0c",
+        "config_offset": "0x08",
+        "affected_values": ["0x02"],
+        "fixed_values": ["0x03"],
+        "note": "02 = B0 (affected), 03 = C0 (fixed). CPUID 406D8 is the same for both. Board resistor fix is NOT detectable."
+      },
+      "mitigation": "Resistor fix (about 100 ohm across header pins 1 and 6 on DS2415+); keep backups; avoid needless power cycles.",
+      "sources": [
+        {"url": "https://www.intel.com/content/dam/www/public/us/en/documents/specification-updates/atom-c2000-family-spec-update.pdf", "quote": "Parameter A0 SoC A1 SoC B0 SoC C0 SoC / PCI Rev ID 0 1 2 3"},
+        {"url": "research/2026-10-25-avr54-ds2415.md", "quote": "full source list there"}
+      ],
+      "this_unit": {"measured": "rev 02 (B0)", "result": "affected silicon; owner fitted resistor"}
+    },
+    {
+      "id": "avr49",
+      "title": "Atom C2000 USB 2.0 device may not be detected at power-on",
+      "models": "avoton",
+      "severity": "medium",
+      "detect": {
+        "type": "dmesg_heuristic",
+        "patterns": ["device descriptor read/64, error", "unable to enumerate USB device"],
+        "note": "No direct signal. Relevant because Unraid boots from USB. Intel's workaround is a January 2018 BIOS change; newest Synology BIOS M.211 is dated 2017/05/09."
+      },
+      "mitigation": "Power-cycle if the boot stick is not found; nothing newer from Synology.",
+      "sources": [
+        {"url": "https://www.intel.com/content/dam/www/public/us/en/documents/specification-updates/atom-c2000-family-spec-update.pdf", "quote": "Workaround: An updated (January 2018) BIOS co de change has been identified and may be implemented as workaround for this erratum."}
+      ],
+      "this_unit": {"measured": "no matching dmesg lines in current boot", "result": "info only"}
+    },
+    {
+      "id": "avr35",
+      "title": "Atom C2000 GbE may be non-functional after boot from mechanical off with WOL disabled",
+      "models": "avoton",
+      "severity": "low",
+      "detect": {
+        "type": "netdev_count",
+        "driver": "igb",
+        "pci_ids": ["8086:1f41"],
+        "expected_ports": {"DS2415+": 4},
+        "note": "Fewer igb interfaces than expected, or igb probe errors."
+      },
+      "mitigation": "Cold reset from soft-off clears it (per Intel).",
+      "sources": [
+        {"url": "https://www.intel.com/content/dam/www/public/us/en/documents/specification-updates/atom-c2000-family-spec-update.pdf", "quote": "A subsequent cold reset from soft off (ACPI state G2/S5) will not exhibit this erratum."}
+      ],
+      "this_unit": {"measured": "4 x igb", "result": "ok"}
+    },
+    {
+      "id": "avr53",
+      "title": "Atom C2000 GbE may hang on malformed IPv6 extension headers",
+      "models": "avoton",
+      "severity": "low",
+      "detect": {"type": "none", "note": "Whether in-tree igb carries Intel's workaround is not verified."},
+      "mitigation": "None from the plugin.",
+      "sources": [
+        {"url": "https://www.intel.com/content/dam/www/public/us/en/documents/specification-updates/atom-c2000-family-spec-update.pdf", "quote": "Workaround: Intel ® Ethernet Software release version 20.2 and above contains a workaround for this erratum."}
+      ],
+      "this_unit": {"result": "not checkable"}
+    },
+    {
+      "id": "cr1220",
+      "title": "Dead CR1220 RTC/CMOS cell: unit does not power on",
+      "models": ["DS415+", "DS1515+", "DS1815+"],
+      "severity": "high",
+      "detect": {
+        "type": "procfs_and_dmesg",
+        "file": "/proc/driver/rtc",
+        "field": "batt_status",
+        "bad_value": "dead",
+        "dmesg_pattern": "rtc_cmos .*: setting system clock to (\\d{4})",
+        "note": "'dead' is meaningful, 'okay' proves little (kernel comment: ICH6 reports battery status using a different bit). Clock year before the plugin build year at boot = RTC lost time."
+      },
+      "mitigation": "Replace CR1220 (board must come out).",
+      "sources": [
+        {"url": "https://community.synology.com/enu/forum/1/post/131830", "quote": "I took it apart and removed the battery. Battery tested dead as in 0V on an analog meter."},
+        {"url": "https://github.com/torvalds/linux/blob/master/drivers/rtc/rtc-cmos.c", "quote": "NOTE:  at least ICH6 reports battery status using a different (non-RTC) bit; and SQWE is ignored on many current systems."}
+      ],
+      "this_unit": {"measured": "batt_status okay; RTC clock 2026-10-25 at boot", "result": "ok"}
+    },
+    {
+      "id": "q2q4",
+      "title": "BC847 transistor (Q2/Q4) fails to pull PS_ON low: no power-on or random power cycling",
+      "models": ["DS1515+", "DS1815+", "DS1518+"],
+      "severity": "high",
+      "detect": {"type": "none", "note": "Unit does not start. DS2415+ not confirmed by any source found."},
+      "mitigation": "Replace transistor (BC847B/C).",
+      "sources": [
+        {"url": "https://community.synology.com/enu/forum/1/post/131830", "quote": "Replacing the Q4 transistor with another BC847B-G transistor worked like magic, and my DS1518+ has been operating without issue for 48 hours."},
+        {"url": "https://miketabor.com/fixing-a-synology-ds1515-not-powering-on/", "quote": "Dead B847B transistor"}
+      ],
+      "this_unit": {"result": "not checkable"}
+    },
+    {
+      "id": "psu",
+      "title": "250 W PSU failure / new PSU will not start the unit",
+      "models": ["DS1515+", "DS1815+"],
+      "severity": "medium",
+      "detect": {"type": "none", "note": "No PSU telemetry reaches the host on avoton models."},
+      "sources": [
+        {"url": "https://community.synology.com/enu/forum/1/post/122274", "quote": "Will not power on with verified brand new 250w power supplies, but works fine with a lower rated 200w taken from a DX513 extender."}
+      ],
+      "this_unit": {"result": "not checkable"}
+    },
+    {
+      "id": "marvell-dma-alias",
+      "title": "Marvell 88SE9215/9230/9235 DMA uses function 1 as requester ID",
+      "models": "any",
+      "severity": "info",
+      "detect": {"type": "pci_id", "ids": ["1b4b:9215", "1b4b:9230", "1b4b:9235"], "note": "Kernel quirk_dma_func1_alias handles it; only matters with IOMMU on."},
+      "sources": [
+        {"url": "https://github.com/torvalds/linux/blob/master/drivers/pci/quirks.c", "quote": "DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_MARVELL_EXT, 0x9235,"}
+      ],
+      "this_unit": {"measured": "3 x 9215 rev 11, 1 x 9235 rev 11, no IOMMU", "result": "no warning"}
+    },
+    {
+      "id": "apl47",
+      "title": "Apollo Lake LPC/RTC/SD circuitry may stop functioning in outer years of use",
+      "models": "apollolake",
+      "severity": "info",
+      "detect": {"type": "cpuid", "family": 6, "model": "0x5c", "stepping_values": {"0x9": "B1", "0xa": "F1"}, "note": "Synology states its designs follow Intel's July 2019 guidelines; Intel says B-1 meets quality goals for PC usage."},
+      "sources": [
+        {"url": "https://www.reddit.com/r/hardware/comments/d35wbj/pr_synology_product_reliability_statement/", "quote": "Designs that implement the LPC interface at 1.8V signal voltage are not affected by the LPC issue. Systems designed with a coin cell battery are not affected by the RTC issue."},
+        {"url": "https://www.cpu-world.com/CPUs/Celeron/Intel-Celeron%20J3455.html", "quote": "CPUIDs 506C9 506CA"}
+      ],
+      "this_unit": {"result": "n/a"}
+    },
+    {
+      "id": "disk-fw",
+      "title": "Drive firmware with a known vendor update",
+      "models": "any",
+      "severity": "per-drive",
+      "detect": {"type": "command_output", "command": "smartctl -i /dev/sdX", "pattern": "^==> WARNING:", "note": "smartmontools drivedb carries the per-model/firmware warnings; keep drivedb updated (update-smart-drivedb)."},
+      "sources": [
+        {"url": "https://www.seagate.com/support/kb/barracuda-1tbdisk-platform-firmware-update-223651en/", "quote": "Previous versions of firmware with these models and part numbers are CC46, CC47, CC49, CC4C or CC4G."}
+      ],
+      "this_unit": {"measured": "ST1000DM003-1CH162 CC44, WDC WD1003FZEX-00MK2A0 01.01A01, no drivedb warning", "result": "no warning"}
+    }
+  ]
+}

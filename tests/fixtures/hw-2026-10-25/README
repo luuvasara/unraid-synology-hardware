@@ -1,0 +1,9 @@
+Hardware-section fixtures for tests/mkfixture.py (2026.10.25g), cut from the read-only measurements of the DS2415+ on
+2026-10-25 (experiments/2026-10-25-hw-inventory/: smart-log.txt "##### sdd" / "##### sdc", nic.txt eth0 / eth1).
+Serial numbers and WWNs are replaced by fake ones; everything else is the measured output, unchanged.
+  smart-wd.txt       smartctl -n standby -i -H -A -l error -l sataphy, WDC WD1003FZEX (measured on sdd)
+  smart-seagate.txt  the same, ST1000DM003 (measured on sdc; load cycle count normalized 15 of 100)
+  ethtool-up.txt     ethtool eth0 (1000 Mb/s full, Wake-on g)
+  ethtool-nolink.txt ethtool eth1 (no link)
+The sysfs/procfs values that mkfixture.py writes (PCI ids, link widths, AER, cpufreq, cpuidle, thermal trips, meminfo, USB)
+are the measured ones from cpu.txt, lspci-link.txt, misc*.txt, extra*.txt and pci-usb.txt in the same directory.

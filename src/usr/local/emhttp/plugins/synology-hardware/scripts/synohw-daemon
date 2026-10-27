@@ -1,0 +1,627 @@
+#!/bin/bash
+# synohw-daemon - DS2415+ front-panel MCU daemon: keepalive 'u', status LED, fan from temperatures.
+# Written: 2026-10-24 (logging to syslog 2026-10-25; status files for the settings page 2026-10-25b;
+# real disks only, devs.ini, unreadable disks raise the floor 2026-10-25c; fan sweep 2026-10-25d;
+# history line: table mode, reason, table duty, sweep step, per-core temps for the page graphs 2026-10-25f;
+# Hardware section cache via synohw-inventory every INVENTORY_PERIOD 2026-10-25g;
+# DS_MODE AUTO/MANUAL + DS_FLOOR, DX1215 fan policy through the synology-dx module's sysfs 2026-10-25h;
+# bay LED orange from disk health 2026-10-26a, see led_tick).
+# Started by /etc/rc.d/rc.synology-hardware. Only allow-listed bytes ever reach the tty.
+# Files in $SYNOHW_RUN (RAM, /var/run; never on the flash), read by include/synohw-status.php:
+#   state      key=value, rewritten (tmp + mv) after every evaluation and every keepalive
+#   effective  the settings this daemon runs with (after the cfg parser), written once at start
+#   mcu        MCU->host byte counts since start + last byte, rewritten at most every 5 s
+#   history    "<epoch> cpu=<C|?> duty=<n> <disk>=<C|*|?> ... [@mode=LOW|HIGH @why=<chosen> @want=<n> [@sweep=<step>]
+#              core:<hwmon>_<tempN>=<C|?> ...]" one line per evaluation, last HIST_MAX lines;
+#              <disk> = disks.ini name (disk1, parity) or the devs.ini device (sdd); real disks only
+#              (synohw_disk_list: no empty slots, no flash, no USB); * = standby, ? = spun up, no reading.
+#              duty = the duty last SENT (the sweep's while one runs). 2026.10.25f added the @ and core: tokens for the
+#              page's graphs: @mode table, @why which rule set the table duty (disk|cpu|both|floor|no-data), @want the table
+#              duty, @sweep the sweep step while a sweep holds the fan, core: each CPU sensor. Their keys contain '@' or ':',
+#              which the 2026.10.25b-e parser (key [A-Za-z0-9_-]) skips, so old and new lines read the same in both.
+#              2026.10.25h adds @dsm=AUTO|MANUAL and the DX1215 tokens @dx=<level read|none> @dxwant=<level|-> @dxwhy=<rule>
+#              @dxal=<fan1 + 2*fan2 alarm bits> @dxt=<hottest DX disk C|standby|-> (the 25f/g parser reads only @mode/@why/@want/@sweep
+#              and skips the rest, so 25h lines read the same there). @why gains manual and alert (DS_MODE=MANUAL).
+#   leds       (2026.10.26a) the last bay LED evaluation, read by both plugins' pages: "#at <epoch>", "#health yes|no|nomod",
+#              then one TAB-separated line per disk in a bay: box (ds|dx), bay, device, fault (0|1), reason
+#   dx         (2026.10.25h) key=value copy of /sys/kernel/synology_dx/unit/* made at every DX evaluation; the page reads this copy
+#              while the daemon runs, so it does not trigger extra PMP reads (each read of a unit file older than the module's
+#              30 s cache costs one libata EH round on the DX master port)
+# Fan sweep (rc.synology-hardware sweep start|stop|status), all in $SYNOHW_RUN, never on the flash until the end:
+#   sweep.request  plan ("20 15 12 ...") written by the rc script; picked up (and removed) by the main loop
+#   sweep.stop     stop request; sweep.active exists only while a sweep runs (tells the MCU reader to log bytes)
+#   sweep.bytes    one hex byte value per line, appended by the MCU reader while active, consumed every tick
+#   sweep.state    key=value for the settings page / rc status;  sweep.csv samples;  sweep.steps, sweep-summary.txt
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+. "$HERE/synohw-lib.sh"
+synohw_load_cfg
+synohw_tables
+mkdir -p "$SYNOHW_RUN" || exit 1
+STATE=$SYNOHW_RUN/state
+SHUTFLAG=$SYNOHW_RUN/shutdown
+HIST=$SYNOHW_RUN/history
+HIST_MAX=${SYNOHW_HIST_MAX:-3000}   # 24 h at CPU_PERIOD=30 s is 2880 lines (about 150 KB)
+READER_PID=
+STARTED=$EPOCHSECONDS
+for k in FAN_MODE KEEPALIVE_SEC CPU_PERIOD DISK_PERIOD HYST FAN_REASSERT UNREADABLE_FLOOR NO_DATA_DUTY TICK \
+         BEEP_ON_START AC_RECOVERY WOL SHUTDOWN_ACTION MACFIX DEBUG MCU_LOG_SEC PLACEHOLDER_MAC_PREFIX \
+         SWEEP_MIN_HOLD SWEEP_MAX_HOLD SWEEP_SAMPLE SWEEP_SETTLE_WINDOW SWEEP_SETTLE_DELTA INVENTORY_PERIOD \
+         DS_MODE DS_FLOOR DS_DUTY DX_MODE DX_LEVEL DX_PERIOD LED_HEALTH LED_PERIOD; do
+  printf '%s=%s\n' "$k" "${!k}"
+done >"$SYNOHW_RUN/effective"
+
+now_us() { local t=$EPOCHREALTIME; echo $((10#${t%.*} * 1000000 + 10#${t#*.})); }
+
+stop_sequence() {
+  [ "$sw_on" = 1 ] && sweep_finish aborted "daemon stopped (fan goes to 99 % below)" keep
+  synohw_log "stopping: fan to 99 %, fan checker disarmed (t)"
+  synohw_send V99
+  synohw_send t                     # DSM does this at shutdown (SynoDisableFanCheck; presumably 't')
+  # DX1215 (2026.10.25h): like the DS fan, full while nothing controls it (only if the module is there and it is not full already)
+  if [ "$dx_state" = ok ] && [ "$dx_level" != full ]; then
+    synohw_dx_set full && synohw_log "stopping: DX1215 fans $dx_level -> full"
+  fi
+  declare -F led_clear >/dev/null && led_clear "daemon stopped: nothing watches disk health"   # 2026.10.26a: no stale orange without the policy behind it
+  if [ -e "$SHUTFLAG" ]; then       # system shutdown: power LED blinks, status LED off (as DSM, per design)
+    synohw_send 5
+    synohw_send 7
+  fi
+  [ -n "$READER_PID" ] && kill "$READER_PID" 2>/dev/null
+  rm -f "$SYNOHW_RUN/pid"
+  exit 0
+}
+sw_on=0
+trap stop_sequence TERM INT HUP
+
+synohw_tty_open || exit 1
+echo $$ >"$SYNOHW_RUN/pid"
+
+# MCU -> host bytes: unknown semantics (scemd reads '3' and 'K'; power button not decoded). Log only.
+# The DS2415+ MCU streams "K3" about 4 times a second from power-on, with or without commands
+# (measured 2026-10-24, 9600 baud confirmed: every other rate gives garbage), so by default a byte
+# value is logged the first time it shows up and then once per MCU_LOG_SEC as counts.
+# DEBUG=yes logs every single byte (for measuring e.g. the power button).
+# Every byte is also counted into $SYNOHW_RUN/mcu (at most one rewrite per 5 s) for the settings page.
+( declare -A seen=() cnt=() tot=(); t0=$SECONDS; w0=0; last=; last_at=0
+  while IFS= read -r -d '' -n1 -u "$SYNOHW_FD" ch; do
+    printf -v hex '%02x' "'$ch" 2>/dev/null
+    tot[$hex]=$(( ${tot[$hex]:-0} + 1 )); last=$hex; last_at=$EPOCHSECONDS
+    [ -e "$SYNOHW_RUN/sweep.active" ] && echo "$hex" >>"$SYNOHW_RUN/sweep.bytes"   # fan sweep: every byte is checked
+    if (( EPOCHSECONDS - w0 >= 5 )); then
+      { echo "since=$STARTED"; echo "last=$last"; echo "last_at=$last_at"
+        for h in "${!tot[@]}"; do echo "count_$h=${tot[$h]}"; done; } >"$SYNOHW_RUN/mcu.tmp" && mv -f "$SYNOHW_RUN/mcu.tmp" "$SYNOHW_RUN/mcu"
+      w0=$EPOCHSECONDS
+    fi
+    if [ "$DEBUG" = yes ]; then synohw_log "MCU byte 0x$hex ('$ch')"; continue; fi
+    [ -n "${seen[$hex]}" ] || { seen[$hex]=1; synohw_log "MCU byte 0x$hex ('$ch') first seen"; }
+    cnt[$hex]=$(( ${cnt[$hex]:-0} + 1 ))
+    if (( SECONDS - t0 >= MCU_LOG_SEC )); then
+      s=; for h in "${!cnt[@]}"; do s+=" 0x$h=${cnt[$h]}"; done
+      synohw_log "MCU bytes in last $((SECONDS - t0))s:$s"; cnt=(); t0=$SECONDS
+    fi
+  done ) &
+READER_PID=$!
+
+# ---- startup: measured bytes only ----
+synohw_log "starting: fan_mode=$FAN_MODE ds_mode=$DS_MODE ds_floor=$DS_FLOOR ds_duty=$DS_DUTY dx_mode=$DX_MODE dx_level=$DX_LEVEL keepalive=${KEEPALIVE_SEC}s tty=$SYNOHW_TTY debug=$DEBUG"
+ka_at=0; ka_n=0; ka_fail=0; fan_at=0
+keepalive() { if synohw_send u; then ka_at=$EPOCHSECONDS; ka_n=$((ka_n + 1)); else ka_fail=$((ka_fail + 1)); fi; }
+keepalive                            # arm fan checker (keepalive follows)
+synohw_send 4                        # power LED on
+synohw_send 8                        # status LED green
+synohw_send W20                      # PWM 20 Hz (scemd table: every step is NN% @ 20hz)
+[ "$BEEP_ON_START" = yes ] && synohw_send 2
+case "$AC_RECOVERY" in on) synohw_send q ;; off) synohw_send p ;; esac
+case "$WOL" in on) synohw_send l ;; off) synohw_send k ;; esac
+synohw_send O                        # version query; reply (if any) shows up as MCU bytes in the log
+
+now=$(now_us); last_ka=$now; last_cpu=0; last_disk=0; last_fan=0
+disk_lv=0; cpu_lv=0; cur_duty=-1; alert=0
+cpu_t=; disk_t=; disk_unread=0; cpu_at=0; disk_at=0; disks_hist=; cores_hist=
+want_duty=-1; want_alert=0; st=starting; chosen=; floor=0; c_duty=; d_duty=; c_thr=; d_thr=; tbl_duty=-1
+# DX1215 (2026.10.25h): state of the last DX evaluation (dx_tick)
+dx_state=init; dx_level=; dx_code=; dx_want=; dx_why=; dx_base=; dx_wrote_at=$EPOCHSECONDS; dx_writes=0; dx_wfail=0; dx_err=
+dx_t=; dx_unread=0; dx_n=0; dx_hot=-; dx_lv=0; dx_step=; dx_input=; dx_al1=; dx_al2=; dx_alarm=0; dx_at=0; last_dx=0; dx_said=
+KA_US=$((KEEPALIVE_SEC * 1000000))
+
+# state for the settings page; 'chosen' says which rule set the duty: disk|cpu|both|floor|no-data, MANUAL: manual|floor|no-data|alert
+write_state() {
+  { printf '%s=%s\n' pid $$ started "$STARTED" updated "$EPOCHSECONDS" mode "$FAN_MODE" \
+      cpu "${cpu_t:-?}" cpu_at "$cpu_at" cpu_step "$c_thr" cpu_duty "$c_duty" \
+      disk "${disk_t:-?}" disk_unread "$disk_unread" disk_at "$disk_at" disk_step "$d_thr" disk_duty "$d_duty" \
+      floor "$floor" chosen "$chosen" duty "$want_duty" sent "$cur_duty" sent_at "$fan_at" \
+      alert "$alert" status "$st" ka_at "$ka_at" ka_count "$ka_n" ka_fail "$ka_fail" keepalive_sec "$KEEPALIVE_SEC" \
+      ds_mode "$DS_MODE" ds_floor "$DS_FLOOR" ds_duty "$DS_DUTY" table_duty "$tbl_duty" \
+      dx_state "$dx_state" dx_mode "$DX_MODE" dx_cfg_level "$DX_LEVEL" dx_level "$dx_level" dx_code "$dx_code" dx_want "$dx_want" \
+      dx_why "$dx_why" dx_base "$dx_base" dx_disk "${dx_t:-}" dx_hot "$dx_hot" dx_unread "$dx_unread" dx_disks "$dx_n" dx_step "$dx_step" \
+      dx_input "$dx_input" dx_alarm1 "$dx_al1" dx_alarm2 "$dx_al2" dx_at "$dx_at" dx_wrote_at "$dx_wrote_at" dx_writes "$dx_writes" \
+      dx_write_fail "$dx_wfail" dx_err "$dx_err" dx_period "$DX_PERIOD"
+  } >"$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"
+}
+
+read_cpu() {
+  cpu_t=$(synohw_cpu_temp) || cpu_t=; cpu_at=$EPOCHSECONDS
+  cores_hist=$(synohw_cpu_cores | awk '$1 ~ /^[A-Za-z0-9_-]+$/ {printf " core:%s=%s", $1, $2}')
+}
+read_disks() {
+  if dout=$(synohw_disk_temp); then disk_t=${dout% *}; else disk_t=; fi
+  disk_unread=${dout##* }; [[ $disk_unread =~ ^[0-9]+$ ]] || disk_unread=0
+  disk_at=$EPOCHSECONDS
+  disks_hist=$(synohw_disk_temps | awk '{printf " %s=%s", $1, $2}')
+}
+
+hist_n=0
+history_add() {
+  local sw=
+  [ "$sw_on" = 1 ] && sw=" @sweep=$sw_idx"
+  local dxal=-
+  [[ $dx_al1 =~ ^[01]$ && $dx_al2 =~ ^[01]$ ]] && dxal=$((dx_al1 + 2 * dx_al2))
+  printf '%s cpu=%s duty=%s%s @mode=%s @why=%s @want=%s%s%s @dsm=%s @dx=%s @dxwant=%s @dxwhy=%s @dxal=%s @dxt=%s\n' "$EPOCHSECONDS" "${cpu_t:-?}" "$cur_duty" "$disks_hist" \
+    "$FAN_MODE" "${chosen:-none}" "$tbl_duty" "$sw" "$cores_hist" "$DS_MODE" "${dx_level:-none}" "${dx_want:--}" "${dx_why:--}" "$dxal" "${dx_t:--}" >>"$HIST"
+  hist_n=$((hist_n + 1))
+  if [ $((hist_n % 200)) = 1 ] && [ "$(wc -l <"$HIST")" -gt "$HIST_MAX" ]; then
+    tail -n "$HIST_MAX" "$HIST" >"$HIST.tmp" && mv -f "$HIST.tmp" "$HIST"
+  fi
+}
+
+evaluate() {
+  # returns via globals: want_duty want_alert want_shutdown, and for the state file:
+  # c_thr/c_duty d_thr/d_duty (step threshold and duty per source), floor, chosen, st
+  floor=0; st=ok; c_thr=; d_thr=
+  want_alert=0; want_shutdown=0
+  if [ -n "$cpu_t" ]; then
+    cpu_lv=$(synohw_step_level "$cpu_t" "$cpu_lv" "${CPU_STEPS[@]}")
+    c_duty=$(synohw_level_duty "$cpu_lv" "${CPU_STEPS[@]}"); c_thr=${CPU_STEPS[$cpu_lv]%%:*}
+    [ "$cpu_t" -ge "$CPU_ALERT" ] && want_alert=1
+    [ "$cpu_t" -ge "$CPU_SHUTDOWN" ] && want_shutdown=1
+  else c_duty=0; floor=$UNREADABLE_FLOOR; fi
+  case "$disk_t" in
+    standby) d_duty=$(synohw_level_duty 0 "${DISK_STEPS[@]}"); disk_lv=0; d_thr=0 ;;   # asleep = cool
+    '') d_duty=0; floor=$UNREADABLE_FLOOR ;;
+    *) disk_lv=$(synohw_step_level "$disk_t" "$disk_lv" "${DISK_STEPS[@]}")
+       d_duty=$(synohw_level_duty "$disk_lv" "${DISK_STEPS[@]}"); d_thr=${DISK_STEPS[$disk_lv]%%:*}
+       [ "$disk_t" -ge "$DISK_ALERT" ] && want_alert=1
+       [ "$disk_t" -ge "$DISK_SHUTDOWN" ] && want_shutdown=1 ;;
+  esac
+  [ "$disk_unread" -gt 0 ] && floor=$UNREADABLE_FLOOR    # a spun-up disk without a temperature: not "cool"
+  want_duty=$d_duty; chosen=disk
+  if [ "$c_duty" -gt "$want_duty" ]; then want_duty=$c_duty; chosen=cpu
+  elif [ "$c_duty" = "$want_duty" ]; then chosen=both; fi
+  [ "$floor" -gt "$want_duty" ] && { want_duty=$floor; chosen=floor; }
+  if [ -z "$cpu_t" ] && [ -z "$disk_t" ]; then want_duty=$NO_DATA_DUTY; st=no-data; chosen=no-data; fi
+  [ "$want_duty" -lt "$DS_FLOOR" ] && want_duty=$DS_FLOOR    # DS_FLOOR 10..20 (default 20: scemd's lowest row)
+  [ "$want_duty" -gt 99 ] && want_duty=99
+  tbl_duty=$want_duty
+  if [ "$DS_MODE" = MANUAL ]; then
+    # MANUAL (2026.10.25h): DS_DUTY, raised (never lowered) by the same safety rules as the table: an unreadable source ->
+    # UNREADABLE_FLOOR, no temperature at all -> NO_DATA_DUTY, the ALERT band (disk 58/53 C, CPU 85 C) -> 99. The SHUTDOWN band
+    # is handled as in AUTO (want_shutdown).
+    want_duty=$DS_DUTY; chosen=manual
+    [ "$floor" -gt "$want_duty" ] && { want_duty=$floor; chosen=floor; }
+    [ "$st" = no-data ] && [ "$NO_DATA_DUTY" -gt "$want_duty" ] && { want_duty=$NO_DATA_DUTY; chosen=no-data; }
+    [ "$want_alert" = 1 ] && [ "$want_duty" -lt 99 ] && { want_duty=99; chosen=alert; }
+    [ "$want_duty" -lt 10 ] && want_duty=10
+    [ "$want_duty" -gt 99 ] && want_duty=99
+  fi
+  return 0
+}
+
+# ---- DX1215 fans (2026.10.25h), through the synology-dx plugin's module: /sys/kernel/synology_dx/unit ----
+# Policy (in this order, each step can only raise the level):
+#   AUTO    DSM's DX1215 EBOX table (scemd.xml:357-370) on the hottest disk IN the DX1215 (synohw_disk_box = dx):
+#           low from 0, middle from 48, full from 55 C, HYST below a row to step down; all DX disks asleep -> low
+#           (hibernation_speed="LOW"); no DX disk found at all -> middle (nodisk)
+#   MANUAL  DX_LEVEL;   LINKED  the DS2415+ duty last sent: <40 low, 40..69 middle, >=70 full (synohw_dx_linked)
+#   then, in every mode: a DX disk spun up without a reading -> at least middle (noread); a DX disk at the SHUTDOWN row
+#   61 C -> full (shutdown); fan1_fail or fan2_fail set (or unreadable) -> full (alarm; DSM's FanFailSpeedChange forces FULL,
+#   research/2026-10-25-dx1215-gpio-spec.md:176). Module missing or no master: nothing is written, the state says so.
+# A write happens only when the wanted level differs from the level read, or every FAN_REASSERT s. Never stop (synohw_dx_set).
+DX_SNAP=$SYNOHW_RUN/dx
+SYNOHW_NOTIFY=${SYNOHW_NOTIFY:-/usr/local/emhttp/webGui/scripts/notify}
+declare -A DXV=()
+dx_say() { [ "$1" = "$dx_said" ] && return 0; dx_said=$1; synohw_log "DX1215: $1"; }   # a state change, logged once
+dx_snapshot() {   # read every single-value unit file into DXV and write the page's copy
+  local k v
+  DXV=()
+  for k in master_host unique model fan_level fan_code fan_fail fan1_fail fan2_fail power_on psu1 psu2 switch_mode last_error fan_stop_test_s; do
+    v=$(synohw_dx_val "$k") || v='?'
+    DXV[$k]=$v
+  done
+  { echo "at=$EPOCHSECONDS"; for k in "${!DXV[@]}"; do printf '%s=%s\n' "$k" "${DXV[$k]}"; done; } >"$DX_SNAP.tmp" && mv -f "$DX_SNAP.tmp" "$DX_SNAP"
+}
+dx_tick() {
+  local out want why lvl al=0 d
+  dx_at=$EPOCHSECONDS; dx_step=; dx_input=
+  if out=$(synohw_dx_temp); then read -r dx_t dx_unread dx_n dx_hot <<<"$out"; else dx_t=-; dx_unread=0; dx_n=0; dx_hot=-; fi
+  [ "$dx_t" = - ] && dx_t=
+  if [ ! -d "$SYNOHW_DXSYS/unit" ]; then
+    dx_state=nomod; dx_level=; dx_code=; dx_want=; dx_why=nomod; dx_base=; dx_al1=; dx_al2=; dx_alarm=0
+    rm -f "$DX_SNAP"
+    dx_say "synology_dx module not loaded ($SYNOHW_DXSYS/unit missing): the DX1215 fans are not controlled and keep their level"
+    return 0
+  fi
+  dx_snapshot
+  lvl=${DXV[fan_level]}
+  case "$lvl" in
+    full|middle|low|stop) ;;
+    *) dx_state=nomaster; dx_level=; dx_code=; dx_want=; dx_why=nomaster; dx_base=; dx_al1=; dx_al2=; dx_alarm=0
+       dx_say "module loaded but fan_level reads '$lvl' (no DX1215 master found): nothing written"
+       return 0 ;;
+  esac
+  dx_state=ok; dx_level=$lvl; dx_code=${DXV[fan_code]}; dx_al1=${DXV[fan1_fail]}; dx_al2=${DXV[fan2_fail]}
+  [ "$dx_al1" = 0 ] || al=1
+  [ "$dx_al2" = 0 ] || al=1                     # an unreadable alarm bit counts as an alarm
+  case "$DX_MODE" in
+    MANUAL) want=$DX_LEVEL; why=manual ;;
+    LINKED) d=$cur_duty; [[ $d =~ ^[0-9]+$ ]] || d=$want_duty
+            want=$(synohw_dx_linked "$d"); why=linked; dx_input=$d ;;
+    *) case "$dx_t" in
+         standby) dx_lv=0; want=low; why=standby; dx_step=0 ;;
+         '') want=low; why=auto ;;
+         *) dx_lv=$(synohw_step_level "$dx_t" "$dx_lv" "${DX_STEPS[@]}")
+            want=$(synohw_level_duty "$dx_lv" "${DX_STEPS[@]}"); why=auto; dx_step=${DX_STEPS[$dx_lv]%%:*} ;;
+       esac
+       if [ "$dx_n" = 0 ]; then want=$(synohw_dx_max "$want" middle); why=nodisk; fi ;;
+  esac
+  dx_base=$want
+  if [ "$dx_unread" -gt 0 ] || { [ -z "$dx_t" ] && [ "$dx_n" -gt 0 ]; }; then
+    [ "$(synohw_dx_rank "$want")" -lt 2 ] && { want=middle; why=noread; }
+  fi
+  if [[ $dx_t =~ ^[0-9]+$ ]] && [ "$dx_t" -ge "$DX_SHUTDOWN" ]; then want=full; why=shutdown; fi
+  if [ $al = 1 ]; then want=full; why=alarm; fi
+  if [ $al = 1 ] && [ "$dx_alarm" = 0 ]; then
+    synohw_log "DX1215 FAN ALARM: fan1_fail=$dx_al1 fan2_fail=$dx_al2 -> fans to full"
+    if [ -x "$SYNOHW_NOTIFY" ]; then
+      out=$("$SYNOHW_NOTIFY" -e synology-hardware -s "DX1215 fan alarm" -d "fan1_fail=$dx_al1 fan2_fail=$dx_al2: DX1215 fans set to full" -i alert 2>&1) \
+        || synohw_log "notify failed: $out"
+    fi
+  elif [ $al = 0 ] && [ "$dx_alarm" = 1 ]; then synohw_log "DX1215 fan alarm cleared"; fi
+  dx_alarm=$al; dx_want=$want; dx_why=$why
+  dx_say "controlled: mode $DX_MODE"
+  if [ "$want" != "$lvl" ] || [ $((EPOCHSECONDS - dx_wrote_at)) -ge "$FAN_REASSERT" ]; then
+    if synohw_dx_set "$want"; then
+      [ "$want" != "$lvl" ] && synohw_log "DX1215 fan $lvl -> $want ($why; mode $DX_MODE, hottest DX disk ${dx_t:-none})"
+      dx_writes=$((dx_writes + 1)); dx_err=
+      dx_snapshot; dx_level=${DXV[fan_level]}; dx_code=${DXV[fan_code]}
+    else dx_wfail=$((dx_wfail + 1)); dx_err="writing $want failed at $(date '+%T') (see syslog)"; fi
+    dx_wrote_at=$EPOCHSECONDS
+  fi
+  return 0
+}
+
+# ---- fan sweep (2026.10.25d) ----
+# Characterisation mode: hold fixed duties step by step and record how CPU and disk temperatures react.
+# Started by a request file (rc.synology-hardware sweep start), run by this loop (this process owns the tty), state in
+# $SYNOHW_RUN only. Any of these ends it at once and puts the table duty back (sweep_to_table): a disk >= 46 C or
+# the CPU >= 65 C (first raise thresholds of the LOW table), a temperature that cannot be read, ANY MCU byte other
+# than 0x33 ('3') and 0x4b ('K') (the MCU's only measured stream; anything else could be a fan-fail alarm), a write
+# failure. 'sweep stop', a daemon stop or restart end it too. The duty is never below 10 (plan check + allow-list).
+SW_REQ=$SYNOHW_RUN/sweep.request;  SW_STOP=$SYNOHW_RUN/sweep.stop;   SW_ACTIVE=$SYNOHW_RUN/sweep.active
+SW_BYTES=$SYNOHW_RUN/sweep.bytes;  SW_STATE=$SYNOHW_RUN/sweep.state; SW_CSV=$SYNOHW_RUN/sweep.csv
+SW_STEPS=$SYNOHW_RUN/sweep.steps;  SW_SUM=$SYNOHW_RUN/sweep-summary.txt
+SW_FLASH=${SYNOHW_SWEEP_FLASH:-/boot/config/plugins/synology-hardware}
+sw_plan=(); sw_idx=0; sw_duty=-; sw_started=0; sw_step_at=0; sw_settled=-; sw_nrows=0; sw_temps=; sw_why=; sw_st=idle
+sw_rcsv=; sw_rtxt=; sw_open=0; sw_hold_end=0; sw_last_sample=0; sw_cols_set=0; sw_maxhold=0; sw_dt=5
+sw_n33=0; sw_n4b=0; sw_noth=0; sw_badbyte=; sw_bad=; sw_row=; sw_cpu=; sw_hotv=; sw_hotkey=
+sw_corecols=(); sw_diskcols=()
+
+# a leftover from a previous daemon: the sweep did not survive it
+rm -f "$SW_REQ" "$SW_STOP" "$SW_ACTIVE" "$SW_BYTES" "$SW_BYTES.rd"
+if [ "$(sed -n 's/^state=//p' "$SW_STATE" 2>/dev/null)" = running ]; then
+  sed -i 's/^state=running$/state=aborted/; s/^reason=.*$/reason=daemon restarted or died during the sweep/' "$SW_STATE"
+fi
+
+sweep_state() {
+  local hold=$sw_hold_end
+  [ "$sw_st" = running ] && hold=$((EPOCHSECONDS - sw_step_at))
+  { printf '%s=%s\n' state "$sw_st" plan "${sw_plan[*]}" steps "${#sw_plan[@]}" step "$sw_idx" duty "$sw_duty" \
+      started "$sw_started" updated "$EPOCHSECONDS" step_started "$sw_step_at" hold "$hold" \
+      min_hold "$SWEEP_MIN_HOLD" max_hold "$SWEEP_MAX_HOLD" settled "$sw_settled" samples "$sw_nrows" \
+      temps "$sw_temps" reason "$sw_why" csv "$SW_CSV" summary "$SW_SUM" result_csv "$sw_rcsv" result_txt "$sw_rtxt"
+  } >"$SW_STATE.tmp" && mv -f "$SW_STATE.tmp" "$SW_STATE"
+}
+
+# MCU bytes the reader logged since the last call: count '3' and 'K', remember the first other value
+sweep_bytes() {
+  local h
+  [ -s "$SW_BYTES" ] || return 0
+  mv -f "$SW_BYTES" "$SW_BYTES.rd" 2>/dev/null || return 0
+  while read -r h; do
+    case "$h" in
+      33) sw_n33=$((sw_n33 + 1)) ;;
+      4b) sw_n4b=$((sw_n4b + 1)) ;;
+      *)  sw_noth=$((sw_noth + 1)); [ -n "$sw_badbyte" ] || sw_badbyte=$h ;;
+    esac
+  done <"$SW_BYTES.rd"
+  rm -f "$SW_BYTES.rd"
+}
+
+# One reading of every source. Sets sw_row (CSV fields cpu_max,cores...,disks...), sw_temps, sw_cpu, sw_hotv/sw_hotkey
+# (hottest disk), sw_bad (what was unreadable). rc 1 = something unreadable ('?' in its field). The column set is
+# fixed by the first reading; a column that later disappears or reads '*'/'?' (standby, no reading) is unreadable.
+sweep_read() {
+  local key r dev id src list v row bad=0 why=
+  local -A cv=() dv=()
+  sw_hotv=; sw_hotkey=
+  if sw_cpu=$(synohw_cpu_temp); then :; else sw_cpu='?'; bad=1; why+=" cpu"; fi
+  while read -r key r; do [ -n "$key" ] && cv[$key]=$r; done < <(synohw_cpu_cores)
+  if list=$(synohw_disk_list); then
+    while read -r key r dev id src; do
+      [ -n "$key" ] || continue
+      if [ "$id" != - ]; then key=$id; else key=$dev; fi    # keyed by serial/id, never by sdX
+      dv[$key]=$r
+    done <<<"$list"
+  else bad=1; why+=" disk-list"; fi
+  if [ "$sw_cols_set" = 0 ]; then
+    sw_corecols=(); sw_diskcols=()
+    [ "${#cv[@]}" -gt 0 ] && mapfile -t sw_corecols < <(printf '%s\n' "${!cv[@]}" | sort)
+    [ "${#dv[@]}" -gt 0 ] && mapfile -t sw_diskcols < <(printf '%s\n' "${!dv[@]}" | sort)
+    sw_cols_set=1
+    [ "${#sw_diskcols[@]}" -gt 0 ] || { bad=1; why+=" no-disk"; }
+  fi
+  row=$sw_cpu; sw_temps="cpu=$sw_cpu"
+  for key in "${sw_corecols[@]}"; do
+    v=${cv[$key]:-?}; [[ $v =~ ^-?[0-9]+$ ]] || { bad=1; why+=" $key"; v='?'; }
+    row+=,$v
+  done
+  for key in "${sw_diskcols[@]}"; do
+    v=${dv[$key]:-?}
+    if [[ $v =~ ^-?[0-9]+$ ]]; then
+      { [ -z "$sw_hotv" ] || [ "$v" -gt "$sw_hotv" ]; } && { sw_hotv=$v; sw_hotkey=$key; }
+    else bad=1; why+=" disk:$key($v)"; v='?'; fi
+    row+=,$v; sw_temps+=" $key=$v"
+  done
+  sw_row=$row; sw_bad=${why# }
+  return $bad
+}
+
+# one CSV row: epoch,step,duty,<temps>,mcu_33,mcu_4b,mcu_other. $1=nocheck: no safety verdict (final row of an abort)
+sweep_sample() {
+  local rd=0
+  sweep_read || rd=1
+  sweep_bytes
+  printf '%s,%s,%s,%s,%s,%s,%s\n' "$EPOCHSECONDS" "$sw_idx" "$sw_duty" "$sw_row" "$sw_n33" "$sw_n4b" "$sw_noth" >>"$SW_CSV"
+  sw_nrows=$((sw_nrows + 1)); sw_n33=0; sw_n4b=0; sw_noth=0; sw_last_sample=$EPOCHSECONDS
+  sweep_state
+  [ "${1:-}" = nocheck ] && return 0
+  if [ $rd = 1 ]; then sweep_finish aborted "temperature source unreadable: $sw_bad (the plan does not run blind)"; return 1; fi
+  if [ -n "$sw_badbyte" ]; then sweep_finish aborted "unexpected MCU byte 0x$sw_badbyte (only 0x33 and 0x4b are known; possible fan-fail alarm)"; return 1; fi
+  if [ -n "$sw_hotv" ] && [ "$sw_hotv" -ge "$SWEEP_DISK_ABORT" ]; then
+    sweep_finish aborted "disk $sw_hotkey at $sw_hotv C >= $SWEEP_DISK_ABORT C"; return 1; fi
+  if [ "$sw_cpu" -ge "$SWEEP_CPU_ABORT" ]; then sweep_finish aborted "CPU at $sw_cpu C >= $SWEEP_CPU_ABORT C"; return 1; fi
+  return 0
+}
+
+sweep_send_duty() {
+  synohw_send "V$sw_duty" || return 1
+  cur_duty=$sw_duty; last_fan=$(now_us); fan_at=$EPOCHSECONDS
+}
+
+# the table duty from fresh readings (same code path as the main loop), sent right now
+sweep_to_table() {
+  read_cpu; read_disks; evaluate
+  last_cpu=$(now_us); last_disk=$last_cpu
+  if synohw_send "V$want_duty"; then cur_duty=$want_duty; last_fan=$(now_us); fan_at=$EPOCHSECONDS
+    synohw_log "SWEEP: back on the table duty V$want_duty (cpu=${cpu_t:-?} disk=${disk_t:-?})"
+  else synohw_log "SWEEP: could not send the table duty V$want_duty"; cur_duty=-1; last_cpu=0; fi
+  write_state
+}
+
+sweep_save() {   # one small flash write, at the very end, only when there are samples
+  local ts n=0 base
+  [ "$sw_nrows" -gt 0 ] || return 0
+  ts=$(date +%Y%m%d-%H%M); base=$SW_FLASH/sweep-$ts
+  [ -e "$base.csv" ] && base=$base-$EPOCHSECONDS
+  if mkdir -p "$SW_FLASH" && cp -f "$SW_CSV" "$base.csv" && cp -f "$SW_SUM" "$base.txt"; then
+    sw_rcsv=$base.csv; sw_rtxt=$base.txt; synohw_log "SWEEP results copied to $base.{csv,txt}"
+  else synohw_log "SWEEP: could not copy the results to $SW_FLASH (they stay in $SYNOHW_RUN until reboot)"; fi
+}
+
+# end of the sweep. $1 = done|aborted|stopped, $2 = reason, $3 = flags: keep (no table duty: the stop sequence
+# follows), row (final CSV row after the table duty was resent)
+sweep_finish() {
+  local res=$1 why=$2 flags=${3:-} hold=0 ok
+  sw_on=0
+  synohw_log "SWEEP ${res^^}: $why"
+  [[ $flags == *keep* ]] || sweep_to_table
+  [[ $flags == *row* ]] && sweep_sample nocheck
+  rm -f "$SW_ACTIVE" "$SW_BYTES" "$SW_BYTES.rd"
+  if [ "$sw_open" = 1 ]; then
+    hold=$((EPOCHSECONDS - sw_step_at)); sw_hold_end=$hold
+    ok=$(synohw_sweep_settled "$SW_CSV" "$sw_idx" "$SWEEP_SETTLE_WINDOW" "$sw_dt")
+    echo "$sw_idx $sw_duty $hold $ok $res" >>"$SW_STEPS"; sw_open=0
+  fi
+  sw_st=$res; sw_why=$why
+  {
+    echo "Fan sweep summary (synology-hardware 2026.10.25d)"
+    echo "plan (duty %): ${sw_plan[*]}"
+    echo "started: $(date -d "@$sw_started" '+%F %T'), ended: $(date '+%F %T'), result: $res ($why)"
+    echo "hold per step: at least ${SWEEP_MIN_HOLD} s, at most ${sw_maxhold} s; early advance when no temperature moved more than ${SWEEP_SETTLE_DELTA} C in ${SWEEP_SETTLE_WINDOW} s; one row every ${SWEEP_SAMPLE} s"
+    echo "aborts: disk >= ${SWEEP_DISK_ABORT} C, CPU >= ${SWEEP_CPU_ABORT} C, unreadable temperature, MCU byte other than 0x33/0x4b, write failure"
+    echo "Duty is what was sent (no tach: RPM cannot be read). Temperatures are whole degrees, so slopes are coarse."
+    echo
+    if [ -s "$SW_STEPS" ]; then synohw_sweep_summary "$SW_STEPS" "$SW_CSV" "$SWEEP_SETTLE_WINDOW"; else echo "no step ran"; fi
+    echo "columns of the csv: $(head -n1 "$SW_CSV" 2>/dev/null)"
+  } >"$SW_SUM"
+  sweep_save
+  sweep_state
+}
+
+sweep_begin() {
+  local plan=$1 hdr key
+  read -r -a sw_plan <<<"$plan"
+  sw_idx=0; sw_duty=-; sw_started=$EPOCHSECONDS; sw_step_at=$EPOCHSECONDS; sw_settled=-; sw_nrows=0; sw_temps=; sw_why=
+  sw_rcsv=; sw_rtxt=; sw_open=0; sw_hold_end=0; sw_cols_set=0; sw_n33=0; sw_n4b=0; sw_noth=0; sw_badbyte=
+  rm -f "$SW_CSV" "$SW_STEPS" "$SW_SUM" "$SW_BYTES" "$SW_BYTES.rd" "$SW_STOP"
+  if ! synohw_sweep_plan_ok "${sw_plan[@]}"; then
+    sw_st=aborted; sw_why="bad plan '$plan' (1..$SWEEP_MAX_STEPS steps, each an integer 10..99)"
+    synohw_log "SWEEP ABORTED: $sw_why"; sweep_state; return 0
+  fi
+  sw_maxhold=$SWEEP_MAX_HOLD; [ "$sw_maxhold" -lt "$SWEEP_MIN_HOLD" ] && sw_maxhold=$SWEEP_MIN_HOLD
+  sw_dt=$(awk -v d="$SWEEP_SETTLE_DELTA" 'BEGIN { printf "%d", d * 10 + 0.5 }')
+  sw_on=1; sw_st=running; touch "$SW_ACTIVE"
+  synohw_log "SWEEP started: plan ${sw_plan[*]} (hold ${SWEEP_MIN_HOLD}-${sw_maxhold} s, sample ${SWEEP_SAMPLE} s)"
+  sweep_state
+  if ! sweep_read; then sweep_finish aborted "temperature source unreadable before the first step: $sw_bad"; return 0; fi
+  hdr=epoch,step,duty,cpu_max
+  for key in "${sw_corecols[@]}"; do hdr+=,core:$key; done
+  for key in "${sw_diskcols[@]}"; do hdr+=,disk:$key; done
+  echo "$hdr,mcu_33,mcu_4b,mcu_other" >"$SW_CSV"
+  sweep_start_step
+}
+
+sweep_start_step() {
+  sw_idx=$((sw_idx + 1)); sw_duty=${sw_plan[$((sw_idx - 1))]}; sw_step_at=$EPOCHSECONDS; sw_open=1; sw_settled=-
+  synohw_log "SWEEP step $sw_idx/${#sw_plan[@]}: fan -> V$sw_duty"
+  if ! sweep_send_duty; then sweep_finish aborted "write failure sending V$sw_duty"; return 0; fi
+  sweep_sample
+}
+
+sweep_end_step() {   # $1 = why the step ended
+  local hold=$((EPOCHSECONDS - sw_step_at)) ok
+  ok=$(synohw_sweep_settled "$SW_CSV" "$sw_idx" "$SWEEP_SETTLE_WINDOW" "$sw_dt")
+  echo "$sw_idx $sw_duty $hold $ok $1" >>"$SW_STEPS"; sw_open=0; sw_settled=$ok; sw_hold_end=$hold
+  synohw_log "SWEEP step $sw_idx/${#sw_plan[@]} (V$sw_duty) over after $hold s: $1, settled=$ok"
+  if [ "$sw_idx" -ge "${#sw_plan[@]}" ]; then sweep_finish done "plan complete"; else sweep_start_step; fi
+}
+
+sweep_check() {   # every SWEEP_SAMPLE: row + safety, then end the step when due
+  sweep_sample || return 0
+  local hold=$((EPOCHSECONDS - sw_step_at)) why=
+  if [ "$hold" -ge "$sw_maxhold" ]; then why=max-hold
+  elif [ "$hold" -ge "$SWEEP_MIN_HOLD" ] && [ "$(synohw_sweep_settled "$SW_CSV" "$sw_idx" "$SWEEP_SETTLE_WINDOW" "$sw_dt")" = yes ]; then why=settled; fi
+  [ -n "$why" ] && sweep_end_step "$why"
+  return 0
+}
+
+sweep_tick() {   # called every TICK from the main loop
+  local plan
+  if [ -e "$SW_STOP" ]; then
+    rm -f "$SW_STOP"
+    [ "$sw_on" = 1 ] && { sweep_finish stopped "stopped by 'sweep stop'" row; return 0; }
+  fi
+  if [ "$sw_on" != 1 ]; then
+    if [ -e "$SW_REQ" ]; then plan=$(<"$SW_REQ"); rm -f "$SW_REQ"; sweep_begin "$plan"; fi
+    return 0
+  fi
+  sweep_bytes
+  if [ -n "$sw_badbyte" ]; then
+    sweep_finish aborted "unexpected MCU byte 0x$sw_badbyte (only 0x33 and 0x4b are known; possible fan-fail alarm)" row; return 0
+  fi
+  if [ $(( $(now_us) - last_fan )) -ge $((FAN_REASSERT * 1000000)) ]; then   # FAN_REASSERT applies to the sweep duty too
+    sweep_send_duty || { sweep_finish aborted "write failure re-sending V$sw_duty"; return 0; }
+  fi
+  [ $((EPOCHSECONDS - sw_last_sample)) -ge "$SWEEP_SAMPLE" ] && sweep_check
+  return 0
+}
+
+# ---- bay LEDs (2026.10.26a) ----
+# The synology-expansion plugin switches the LEDs on (green = the controllers' own presence/activity); this daemon owns the
+# orange (fault) bits, as it owns the fan policy, because it already reads Unraid's disk state. Every LED_PERIOD s:
+# synohw_disk_health (Unraid's disks.ini/devs.ini state and its own SMART cache; no disk is touched) -> for each disk in a
+# bay (synohw_bay_target) the wanted bit; the whole mask of each controller (ds/<pci>/fault_mask, only where leds_enabled = 1)
+# and port multiplier (hostN/fault, only where led_mask = 0) is written when it differs from what the driver reads, so a bay
+# without a fault (or without a disk) is cleared. LED_HEALTH=no: every bit this daemon set is cleared and nothing else written.
+# Daemon stop: the bits it set are cleared (led_clear). Result for the pages: $SYNOHW_RUN/leds.
+LEDS=$SYNOHW_RUN/leds
+declare -A LED_SET=()      # "<ds|dx> <pci|hostN>" -> mask this daemon last wrote (non-zero only)
+led_said=
+led_say() { [ "$1" = "$led_said" ] && return 0; led_said=$1; synohw_log "bay LEDs: $1"; }
+led_write() {   # box target mask
+  local cur f
+  [ "$1" = ds ] && f=$SYNOHW_DXSYS/ds/$2/fault_mask || f=$SYNOHW_DXSYS/$2/fault
+  cur=$(<"$f") 2>/dev/null || cur=
+  [ "$cur" = "$3" ] && { [ "$3" = 0 ] && unset 'LED_SET[$1 $2]' || LED_SET["$1 $2"]=$3; return 0; }
+  if synohw_led_set "$1" "$2" "$3"; then
+    synohw_log "bay LEDs: $1 $2 orange mask ${cur:-?} -> $3"
+    if [ "$3" = 0 ]; then unset 'LED_SET[$1 $2]'; else LED_SET["$1 $2"]=$3; fi
+  fi
+}
+led_clear() {   # reason: clear every mask this daemon set
+  local k
+  for k in "${!LED_SET[@]}"; do led_write ${k% *} ${k#* } 0; done
+  [ -n "$1" ] && [ -n "$k" ] && synohw_log "bay LEDs: orange cleared ($1)"
+  return 0
+}
+led_tick() {
+  local out dev f why tgt box t port bay d k
+  local -A want=()
+  if [ ! -d "$SYNOHW_DXSYS" ]; then
+    led_say "no driver directory $SYNOHW_DXSYS: bay LEDs not driven"; printf '#at %s
+#health nomod
+' "$EPOCHSECONDS" >"$LEDS.tmp" && mv -f "$LEDS.tmp" "$LEDS"; return 0
+  fi
+  if [ "$LED_HEALTH" != yes ]; then
+    led_clear "LED_HEALTH=no"; led_say "LED_HEALTH=no: orange is not set from disk health"
+    printf '#at %s
+#health no
+' "$EPOCHSECONDS" >"$LEDS.tmp" && mv -f "$LEDS.tmp" "$LEDS"; return 0
+  fi
+  for d in "$SYNOHW_DXSYS"/ds/0000:*; do      # controllers whose LEDs are on: their mask is ours to set
+    [ -r "$d/leds_enabled" ] && [ "$(<"$d/leds_enabled")" = 1 ] && want["ds ${d##*/}"]=0
+  done
+  for d in "$SYNOHW_DXSYS"/host*; do
+    [ -r "$d/led_mask" ] && [ "$(<"$d/led_mask")" = 0 ] && want["dx ${d##*/}"]=0
+  done
+  out=$(synohw_disk_health)
+  { printf '#at %s
+#health yes
+' "$EPOCHSECONDS"
+    while read -r dev f why; do
+      [ -n "$dev" ] || continue
+      tgt=$(synohw_bay_target "$dev") || continue
+      read -r box t port bay <<<"$tgt"
+      printf '%s	%s	%s	%s	%s
+' "$box" "$bay" "$dev" "$f" "$why"
+      if [ "$f" = 1 ] && [ -n "${want[$box $t]+x}" ]; then want["$box $t"]=$(( want[$box $t] | (1 << port) )); fi
+    done <<<"$out"
+  } >"$LEDS.tmp"; mv -f "$LEDS.tmp" "$LEDS"
+  for k in "${!want[@]}"; do led_write ${k% *} ${k#* } "${want[$k]}"; done
+  for k in "${!LED_SET[@]}"; do [ -n "${want[$k]+x}" ] || unset 'LED_SET[$k]'; done   # LEDs switched off under us: not ours now
+  led_say "orange from disk health on ${#want[@]} controller(s)/port multiplier(s) with LEDs on"
+  return 0
+}
+led_at=0
+
+# Hardware section cache (2026.10.25g): synohw-inventory runs smartctl -n standby on awake disks and ethtool, in the
+# background with the tty fd closed (it can never write to the MCU), every INVENTORY_PERIOD; it locks itself against overlap.
+inv_at=0
+inventory_tick() {
+  [ $((EPOCHSECONDS - inv_at)) -ge "$INVENTORY_PERIOD" ] || return 0
+  inv_at=$EPOCHSECONDS
+  [ -x "$HERE/synohw-inventory" ] || return 0
+  ( exec 3>&- "$HERE/synohw-inventory" </dev/null >/dev/null 2>&1 ) &
+  return 0
+}
+
+while :; do
+  now=$(now_us)
+  inventory_tick
+  if [ $((now - last_ka)) -ge "$KA_US" ]; then keepalive; last_ka=$now; write_state; fi
+  sweep_tick
+  if [ $((now - last_cpu)) -ge $((CPU_PERIOD * 1000000)) ] || [ $((now - last_disk)) -ge $((DISK_PERIOD * 1000000)) ]; then
+    if [ $((now - last_cpu)) -ge $((CPU_PERIOD * 1000000)) ]; then read_cpu; last_cpu=$now; fi
+    if [ $((now - last_disk)) -ge $((DISK_PERIOD * 1000000)) ]; then read_disks; last_disk=$now; fi
+    evaluate
+    # during a fan sweep the sweep owns the duty (sweep_tick); the table result is only tracked for the alert/shutdown bands
+    if [ "$sw_on" != 1 ] && { [ "$want_duty" != "$cur_duty" ] || [ $((now - last_fan)) -ge $((FAN_REASSERT * 1000000)) ]; }; then
+      [ "$want_duty" != "$cur_duty" ] && synohw_log "fan $cur_duty -> $want_duty % (cpu=${cpu_t:-?} disk=${disk_t:-?} unreadable_disks=$disk_unread mode=$DS_MODE why=$chosen)"
+      [ "$want_duty" != "$cur_duty" ] && [ "$DX_MODE" = LINKED ] && last_dx=0    # LINKED follows at once
+      synohw_send "V$want_duty" && { cur_duty=$want_duty; last_fan=$now; fan_at=$EPOCHSECONDS; }
+    fi
+    if [ "$want_alert" != "$alert" ]; then
+      if [ "$want_alert" = 1 ]; then synohw_log "ALERT band reached"; synohw_send ';'; synohw_send LA1
+      else synohw_log "alert cleared"; synohw_send 8; synohw_send LA3; fi
+      alert=$want_alert
+    fi
+    [ $((EPOCHSECONDS - last_dx)) -ge "$DX_PERIOD" ] && { dx_tick; last_dx=$EPOCHSECONDS; }   # before the history line: it carries the DX level
+    write_state; history_add
+    if [ "$want_shutdown" = 1 ]; then
+      synohw_log "SHUTDOWN band reached (cpu=${cpu_t:-?} disk=${disk_t:-?}); SHUTDOWN_ACTION=$SHUTDOWN_ACTION"
+      [ "$SHUTDOWN_ACTION" = yes ] && { touch "$SHUTFLAG"; /sbin/poweroff; }
+    fi
+  fi
+  if [ $((EPOCHSECONDS - last_dx)) -ge "$DX_PERIOD" ]; then dx_tick; last_dx=$EPOCHSECONDS; write_state; fi
+  if [ $((EPOCHSECONDS - led_at)) -ge "$LED_PERIOD" ]; then led_tick; led_at=$EPOCHSECONDS; fi
+  sleep "$TICK"
+done

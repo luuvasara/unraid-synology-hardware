@@ -1,0 +1,7 @@
+DS2415+ under Unraid 7.3.4, measured 2026-10-25 01:52 (array unassigned). Only the keys that were
+recorded are reproduced; emhttpd writes more (id, transport, sectors, rotational, ...).
+disks.ini: 24 empty slots (parity, disk1..disk22, parity2: device="" status="DISK_NP" temp="*")
+           + the flash (device="sda" status="DISK_OK" temp="*"). Section order assumed.
+devs.ini:  dev1 sdd (HDD, spun up, 28 C), dev2 sdb (the 120 MB USB DOM, f400:f400), dev3 sdc (HDD, 31 C).
+sysfs (built by the tests): sdd/sdc on SATA (ata), sda/sdb on USB.
+Expected fan input: hottest 31 C from sdc, no unreadable disk, the DOM and the flash excluded.

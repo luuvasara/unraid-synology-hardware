@@ -1,0 +1,43 @@
+#!/bin/bash
+# synohw-postinstall - everything the .plg post-install does. Written: 2026-10-25.
+# It NEVER fails: at boot rc.local runs 'plugin install' on every .plg (rc.local:224-230) and a
+# non-zero Run result moves the .plg to /boot/config/plugins-error (plugin:745-748, 764-767), i.e.
+# the plugin would silently be gone after the next reboot. Problems are logged to syslog instead.
+set +e
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+. "$HERE/synohw-lib.sh"
+CFGDIR=${SYNOHW_CFGDIR:-/boot/config/plugins/synology-hardware}
+RC=${SYNOHW_RC_PATH:-/etc/rc.d/rc.synology-hardware}
+K=${SYNOHW_K_PATH:-/etc/rc.d/rc6.d/K05synology-hardware}
+note() { echo "synology-hardware: $*"; synohw_log "$*"; }
+
+mkdir -p "$CFGDIR" || note "post-install: cannot create $CFGDIR"
+CFG=$CFGDIR/synology-hardware.cfg
+
+# 2026.10.25i: the plugin was called synology-hw before. One-time migration: its cfg and fan sweep results are copied (never
+# moved, never overwritten) when the new flash dir lacks them; the old dir is left for 'plugin remove synology-hw.plg'.
+OLDDIR=${SYNOHW_OLD_CFGDIR:-/boot/config/plugins/synology-hw}
+if [ -d "$OLDDIR" ]; then
+  if [ ! -e "$CFG" ] && [ -f "$OLDDIR/synology-hw.cfg" ]; then
+    cp "$OLDDIR/synology-hw.cfg" "$CFG" && note "post-install: migrated the settings from $OLDDIR/synology-hw.cfg" || note "post-install: cannot copy $OLDDIR/synology-hw.cfg"
+  fi
+  for f in "$OLDDIR"/sweep-*.csv "$OLDDIR"/sweep-*.txt; do
+    [ -f "$f" ] || continue
+    [ -e "$CFGDIR/${f##*/}" ] && continue
+    cp -p "$f" "$CFGDIR/" && note "post-install: copied fan sweep result ${f##*/} from $OLDDIR" || note "post-install: cannot copy $f"
+  done
+fi
+# the old plugin's daemon must not keep driving ttyS1 next to the new one: a deliberate stop (its watchdog leaves that alone)
+OLDRC=${SYNOHW_OLD_RC:-/etc/rc.d/rc.synology-hw}
+if [ -x "$OLDRC" ] && "$OLDRC" status >/dev/null 2>&1; then
+  "$OLDRC" stop >/dev/null 2>&1; note "post-install: stopped the old synology-hw daemon (rc $?); remove the old plugin: plugin remove synology-hw.plg"
+fi
+if [ ! -e "$CFG" ]; then cp "$HERE/../default/synology-hardware.cfg" "$CFG" || note "post-install: cannot seed $CFG"
+elif grep -q '^#' "$CFG"; then sed -i '/^#/d' "$CFG"   # 2026.10.24a/b seeded a '#' line; PHP's parse_ini_file rejects it
+fi
+chmod 755 "$RC" "$K" "$HERE"/synohw-* 2>/dev/null; chmod 644 "$HERE/synohw-lib.sh" 2>/dev/null
+
+"$RC" macfix;  r=$?; [ $r = 0 ] || note "post-install: macfix returned $r (see syslog); continuing"
+"$RC" restart; r=$?; [ $r = 0 ] || note "post-install: daemon not running (rc $r); plugin stays installed"
+"$HERE/synohw-cron" install; r=$?; [ $r = 0 ] || note "post-install: cron install returned $r"
+exit 0

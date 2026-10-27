@@ -1,0 +1,37 @@
+#!/bin/bash
+# synohw-cron - the watchdog cron job, installed the Unraid way. Written: 2026-10-25.
+# Unraid's /usr/local/sbin/update_cron (7.3.4, lines 6-16) concatenates /boot/config/plugins/<p>/*.cron
+# for every plugin registered in /var/log/plugins/<p>.plg into the system crontab. The 'plugin' command
+# creates that registration only AFTER the post-install script returned (plugin:775-778), and at boot
+# nothing calls update_cron after the plugins are installed (rc.local:86 runs it before them), so a
+# detached waiter runs update_cron once the registration exists.
+# Verbs: install (write the file if it differs + start the waiter) | wait | remove
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+. "$HERE/synohw-lib.sh"
+CRON=${SYNOHW_CRON_FILE:-/boot/config/plugins/synology-hardware/synology-hardware.cron}
+LINK=${SYNOHW_PLUGIN_LINK:-/var/log/plugins/synology-hardware.plg}
+UPDATE_CRON=${SYNOHW_UPDATE_CRON:-/usr/local/sbin/update_cron}
+WAIT=${SYNOHW_CRON_WAIT:-180}
+RC=${SYNOHW_RC_PATH:-/etc/rc.d/rc.synology-hardware}
+TEXT="# synology-hardware watchdog: restart the MCU daemon if it died (a deliberate stop is left alone)
+*/5 * * * * $RC watchdog >/dev/null 2>&1"
+
+case "$1" in
+  install)
+    mkdir -p "$(dirname "$CRON")"
+    if [ ! -f "$CRON" ] || [ "$(cat "$CRON")" != "$TEXT" ]; then
+      printf '%s\n' "$TEXT" >"$CRON" && synohw_log "cron: wrote $CRON" || { synohw_log "cron: cannot write $CRON"; exit 1; }
+    fi
+    if [ "${SYNOHW_DETACH:-yes}" = no ]; then exec "$0" wait; fi
+    setsid -f "$0" wait </dev/null >/dev/null 2>&1 ;;
+  wait)
+    for _ in $(seq 1 "$WAIT"); do
+      if [ -e "$LINK" ]; then "$UPDATE_CRON" && synohw_log "cron: update_cron done, watchdog active"; exit 0; fi
+      sleep 1
+    done
+    synohw_log "cron: plugin not registered after ${WAIT}s, update_cron not run (watchdog inactive until the next update_cron)" ;;
+  remove)
+    rm -f "$CRON" ;;
+  *) echo "usage: $0 install|wait|remove" >&2; exit 2 ;;
+esac
+exit 0

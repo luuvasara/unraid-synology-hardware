@@ -1,0 +1,7 @@
+Fixtures for tests/run-tests.sh. Written: 2026-10-26.
+  vender               synthetic DOM 'vender' file (fake MACs 00:11:32:00:00:09..0c, fake serial 0000ABC000000), 64 KiB
+  uefi1-ds2415p.bin    synthetic ACPI UEFI1 table with an Insyde $BVDT$ block (BIOS M.211, MohonPeak, 05.04.12)
+  fan-tables.json      DSM's DS2415+ fan tables (LOW/HIGH: disk and CPU steps, alert, shutdown), the numbers only,
+  dx-table.json        and the DX1215 table, extracted from the unit's scemd.xml; the file itself is Synology's and is
+                       not published. In the development tree the tests also check these against scemd.xml.
+  hw-2026-10-25/, measured-2026-10-25/   see the README in each (measured values, fake serials)

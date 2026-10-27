@@ -1,0 +1,94 @@
+Menu="SynologyHW:3"
+Title="DX1215"
+Tag="hdd-o"
+---
+<?php
+/* DX1215 tab (2026.10.25j): expansion driver, fan control and DSM's table, disks, power, settings form. */
+?>
+<?php require_once "$docroot/plugins/synology-hardware/include/synohw-page.php"; $P = synohw_page(); $S = $P['s']; $live = $P['live']; $cfg = $P['cfg']; $plugin = "synology-hardware"; synohw_page_head(); ?>
+
+<div class="title"><span class="left"><i class="title fa fa-plug"></i>_(Expansion driver)_ <?=synohw_badge('dx', $S, true)?></span><span class="synohw-live-state grey-text"><noscript>Live updates need JavaScript; values are from page load.</noscript></span></div>
+
+<?=synohw_live('dx_driver')?>
+
+:synohw_dx_plug:
+> **Where it comes from.** The separate expansion plugin (synology-expansion, formerly synology-dx) ships the `synology_dx` kernel module (source `synology-dx/`, README there). It reads the GPIO pins of the DX1215's master port multiplier (the 88SM9705 with EMID 0) through libata and exposes them in `/sys/kernel/synology_dx/unit/` (`fan_level`, `fan_code`, `fan1_fail`, `fan2_fail`, `power_on`, `psu1`, `psu2`, `switch_mode`, `model`, `unique`, `master_host`, `last_error`) and as hwmon `synology_dx` (`fan1_alarm`, `fan2_alarm`, `pwm1`). The bit meanings are from Synology's own code (`research/2026-10-25-dx1215-gpio-spec.md`, page table lines 86-88) and were measured on this unit (`experiments/2026-10-25-synology-dx-phase2a/RESULT.md`, `-phase2b/RESULT.md`).
+>
+> **What is known for sure.** The fan level reads back what was written (each write 0.05 s); low is the CPLD's power-on default and the lowest level at which the fans run; stop stops both fans and sets both alarm bits within 5 s. **Not known:** which value of psu1 / psu2 means "OK" (the DX1215 has one PSU; both read 0); shown raw. **Verified at the box (2026-10-26):** switch_mode 1 = the rear switch on DEFAULT. There is no RPM and no temperature sensor in the DX1215: its disks' temperatures come from Unraid like every other disk.
+>
+> **Cost of reading.** A unit value older than the module's cache (30 s) makes the module re-read the port multiplier: one short libata error-handler round on the DX master port, during which that port's I/O waits. The daemon reads once per `DX_PERIOD` (60 s) and saves a copy in `/var/run/synology-hardware/dx`; this page shows that copy while the daemon runs and reads the module itself only when it does not.
+>
+> **Without the module** nothing here can see or change the DX1215; the daemon writes nothing, and the DX1215 keeps its level (low after power-on).
+:end
+
+<div class="title"><span class="left"><i class="title fa fa-tachometer"></i>_(Fan control)_ <?=synohw_badge('dx', $S, true)?></span></div>
+
+<?=synohw_live('dx_fans')?>
+
+<h3 class="synohw-sub">DSM's DX1215 fan table (scemd.xml:357-370; AUTO uses it)</h3>
+<?=synohw_dx_table_html()?>
+
+<div class="title"><span class="left"><i class="title fa fa-thermometer-half"></i>_(Disk temperatures)_ <?=synohw_badge('dx', $S, true)?></span></div>
+
+<?=synohw_live('temps_dx')?>
+
+<div class="title"><span class="left"><i class="title fa fa-lightbulb-o"></i>_(Bay LEDs)_ <?=synohw_badge('dx', $S, true)?></span></div>
+
+<?=synohw_live('leds_dx')?>
+
+:synohw_leds_dx_plug:
+> **What is shown.** Per bay: the disk Unraid reports there, the LED state the synology_dx driver has set (green = the controller's own presence/activity once the bay LEDs are on; orange = fault) and this plugin's health verdict for the disk. It is what the driver set, not a reading of the LED itself. Bay numbers confirmed at the box by blink count (2026-10-26).
+>
+> **Who sets what.** The Synology Expansion Unit Driver plugin switches the bay LEDs on at boot (default) and has the on/off settings (Utilities, Synology Expansion Unit Driver, Bay LED settings). This plugin's daemon sets orange from disk health every `LED_PERIOD` s (60), with `LED_HEALTH` below: a disk gets orange when Unraid has disabled it or marks it invalid/wrong (disks.ini `DISK_DSBL`, `DISK_DSBL_NEW`, `DISK_INVALID`, `DISK_WRONG`, or a red status colour), or when Unraid's own SMART record for it (`/var/local/emhttp/smart/<name>`) has an attribute at or below its threshold now (`FAILING_NOW`) or an overall-health FAILED. Read errors and attributes that failed only in the past do not set orange. No disk is queried or woken for this. A bay without a fault, or without a disk, is cleared; stopping the daemon clears the orange it set.
+>
+> **DX1215.** Green on = page 1 bit 6 (the disk-LED mask) clear on that port multiplier; orange = page 1 bits 0-2, one per bay of that port multiplier. The orange setting (`LED_HEALTH`) is on the DS2415+ tab.
+:end
+
+<div class="title"><span class="left"><i class="title fa fa-bolt"></i>_(Power and switch)_ <?=synohw_badge('dx', $S, true)?></span></div>
+
+<?=synohw_live('dx_power')?>
+
+<div class="title"><span class="left"><i class="title fa fa-sliders"></i>_(Settings)_ <?=synohw_badge('dx', $S, true)?></span><span class="grey-text">Click a label, or the Help button, for what it does and the source.</span></div>
+
+<form markdown="1" name="synohw_dx" method="POST" action="/update.php" target="progressFrame">
+<input type="hidden" name="#file" value="<?=$plugin?>/<?=$plugin?>.cfg">
+<input type="hidden" name="#command" value="/plugins/<?=$plugin?>/scripts/synohw-apply">
+
+_(DX1215 fan mode)_ (DX_MODE):
+: <select name="DX_MODE" aria-label="DX1215 fan mode (DX_MODE)">
+  <?=mk_option($cfg['DX_MODE'], "AUTO", "AUTO: DSM's DX1215 table on the DX1215 disks (default)")?>
+  <?=mk_option($cfg['DX_MODE'], "MANUAL", "MANUAL: fixed level")?>
+  <?=mk_option($cfg['DX_MODE'], "LINKED", "LINKED: follow the DS2415+ duty")?>
+  </select>
+
+:synohw_dx_mode_plug:
+> **AUTO** (default): DSM's own table for the DX1215 (`capture/2026-10-23/bin/usr/syno/etc.defaults/scemd.xml:357-370`, `Synology-DX1215`, identical for HIGH_EBOX and LOW_EBOX): **low** from 0 °C, **middle** from 48 °C, **full** from 55 °C, SHUTDOWN row at 61 °C; it steps down only 2 °C below a row (`threshold="2"`). Input: the hottest disk **in the DX1215** only, decided from sysfs (behind the 88SE9235 or a port multiplier; the same rule as the Source column of the History legends). All DX1215 disks asleep: low (`hibernation_speed="LOW"`). No DX1215 disk found at all: middle (the input is missing).
+>
+> **MANUAL**: the level set below. **LINKED**: follows the duty last sent to the DS2415+ fan: below 40 % low, 40-69 % middle, 70 % and more full (the DS table's 40 % and 70 % rows).
+>
+> **In every mode** (raise only): any fan alarm bit (fan1_fail or fan2_fail, or one that cannot be read) gives **full**, as DSM's `FanFailSpeedChange` does (`research/2026-10-25-dx1215-gpio-spec.md:176`), plus a syslog line and an Unraid notification; a DX1215 disk spinning without a reading gives at least **middle**; a DX1215 disk at 61 °C gives full. **stop is never written** (only full, middle and low pass the write guard; the module refuses stop on `fan_level` too). The module missing: nothing is written, the DX1215 tab says so.
+>
+> **Bytes.** One write of `full`, `middle` or `low` to `/sys/kernel/synology_dx/unit/fan_level` only when the wanted level differs from the level read, and again every `FAN_REASSERT` s (300). Each write takes about 0.05 s (one EH round on the master port, measured). The daemon reads the unit every `DX_PERIOD` s (60). On a daemon stop (Apply, shutdown) the DX1215 is set to full, like the DS2415+ fan goes to 99 %.
+:end
+
+_(DX1215 manual level)_ (DX_LEVEL):
+: <select name="DX_LEVEL" aria-label="DX1215 manual level (DX_LEVEL)">
+  <?=mk_option($cfg['DX_LEVEL'], "low", "low (quietest running level; CPLD power-on default)")?>
+  <?=mk_option($cfg['DX_LEVEL'], "middle", "middle")?>
+  <?=mk_option($cfg['DX_LEVEL'], "full", "full")?>
+  </select>
+
+:synohw_dx_level_plug:
+> Used only with DX1215 fan mode MANUAL. The CPLD has exactly these three running levels; nothing exists between low and stop (measured, phase 2b), so low is as quiet as the DX1215 can run. The alarm, unreadable and 61 °C rules above still raise it.
+:end
+
+&nbsp;
+: <span class="inline-block">
+    <input type="submit" value="_(Apply)_" disabled>
+    <input type="button" value="_(Done)_" onclick="done()">
+  </span>
+
+:synohw_apply_plug:
+> Apply saves the form into `/boot/config/plugins/synology-hardware/synology-hardware.cfg` (Unraid's `/update.php`, which keeps keys that are not in this form, `update.php:82`) and runs `scripts/synohw-apply`: `rc.synology-hardware macfix` (udev rule per MACFIX), `rc.synology-hardware restart` (stop sends `V99` `t`; start sends `u 4 8 W20` [`2`] [`q`/`p`] [`l`/`k`] `O`), then status. The cfg is parsed as KEY=value lines and never executed; only known keys with valid values are used, everything else is logged as "cfg: ignoring".
+:end
+</form>

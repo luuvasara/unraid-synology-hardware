@@ -1,0 +1,78 @@
+{
+  "written": "2026-10-26",
+  "doc": "research/2026-10-26-firmware-versions.md",
+  "unit_measured": {
+    "date": "2026-10-26",
+    "model": "DS2415+",
+    "bios": "M.211",
+    "microcode": "0x12d",
+    "microcode_from_bios": "0x121",
+    "mcu_version": null,
+    "marvell": [{"pci": "1b4b:9215", "rev": "0x11", "count": 3}, {"pci": "1b4b:9235", "rev": "0x11", "count": 1}],
+    "i354": {"ethtool_fw": "0.0.0", "pba": "002100-000", "nvm_word_0x05": "0x1008"},
+    "dx_pmp": {"id": "1b4b:9705", "gscr_1": "0x0000a00e", "rev": 160, "count": 4},
+    "disks": [
+      {"model": "ST1000DM003-1CH162", "firmware": "CC44", "drivedb_warning": false},
+      {"model": "WDC WD1003FZEX-00MK2A0", "firmware": "01.01A01", "drivedb_warning": false}
+    ]
+  },
+  "components": {
+    "bios": {
+      "readable": true,
+      "read": {
+        "primary": {"file": "/sys/firmware/acpi/tables/UEFI1", "method": "find '$BVDT$' then the next '$'-prefixed NUL-terminated string", "needs_root": true},
+        "fallback": {"command": "dmidecode -s bios-version", "note": "fails on Unraid legacy boot: no SMBIOS entry point"}
+      },
+      "latest": {
+        "DS2415+": {"version": "M.211", "date": "2017/05/09", "source": "bios.ROM in DSM 7.1.1-42962 Update 9 (final DS2415+ DSM); sha256 f9ce24f2e345408bb2ea134a91a6cd2047bd9e85e65feb7478a8cfcd24f13e0a"},
+        "RS2416+": {"version": "M.211", "date": "2017/05/09", "source": "bios.ROM in DSM 7.4.1-90080 (byte-identical to the DS2415+ one)"},
+        "RS2416RP+": {"version": "M.211", "source": "assumed same as RS2416+ (not measured)", "verified": false}
+      },
+      "rule": "warn if model in latest and current != latest.version (string compare)",
+      "this_unit": "M.211 = latest, no warning"
+    },
+    "microcode": {
+      "readable": true,
+      "read": {"file": "/sys/devices/system/cpu/cpu0/microcode/version"},
+      "latest": {
+        "406D8": {"revision": "0x12d", "source": "https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files/blob/main/releasenote.md", "release": "microcode-20191112", "quote": "| AVN            | B0/C0    | 06-4d-08/01 |          | 0000012D | Atom C2xxx", "verified": true}
+      },
+      "seen_not_verified_latest": {"506C9": "0x46", "706A1": "0x40", "706A8": "0x24"},
+      "rule": "warn if int(current,16) < int(latest,16) for the CPU signature; for signatures not in the table, compare against the newest revision in the OS microcode package instead",
+      "this_unit": "0x12d = latest, no warning (BIOS alone would give 0x121)"
+    },
+    "mcu": {
+      "readable": false,
+      "note": "MICROP_VERSION_REPORT 'O' gets no reply on Unraid (research/2026-10-25-hw-info-inventory.md row 41). No MCU image in DSM.",
+      "rule": "none"
+    },
+    "marvell_ahci": {
+      "readable": false,
+      "note": "ahci exposes no firmware version; option ROM read needs a sysfs write; no published firmware.",
+      "rule": "display PCI revision only"
+    },
+    "i354_nvm": {
+      "readable": false,
+      "note": "igb_get_fw_version() returns all zeros for MAC types other than i211/82575/82576/82580/i210/i350; NVM lives in board flash.",
+      "rule": "display PBA (dmesg) only"
+    },
+    "dx_pmp_9705": {
+      "readable": "revision only",
+      "read": {"sysfs": "/sys/kernel/synology_dx/host*/gscr_1", "field": "(gscr_1 >> 8) & 0xff", "dmesg": "Port Multiplier 1.2, 0x1b4b:0x9705 r160"},
+      "latest": null,
+      "note": "Synology updates expansion-unit firmware only for specific SAS models; DX1215 is SATA.",
+      "source": {"url": "https://kb.synology.com/en-global/DSM/help/DSM/AdminCenter/system_dsmupdate", "quote": "Firmware updates are required only for specific SAS models."},
+      "rule": "display only"
+    },
+    "disk": {
+      "readable": true,
+      "read": {"command": "smartctl -i /dev/sdX", "fields": ["Device Model", "Firmware Version"], "warning_pattern": "^==> WARNING:"},
+      "latest": {
+        "ST1000DM003-1CH162": {"latest": null, "note": "Seagate CC4H update covers part 9YN162 only", "source": "https://www.seagate.com/support/kb/barracuda-1tbdisk-platform-firmware-update-223651en/"},
+        "WDC WD1003FZEX-00MK2A0": {"latest": null, "source": "https://support-en.wd.com/app/answers/detail/a_id/50805", "quote": "The firmware on the drive at the time of purchase is normally the final firmware available."}
+      },
+      "rule": "warn when smartctl -i prints a '==> WARNING:' line (smartmontools drivedb)",
+      "this_unit": "no warning for either drive"
+    }
+  }
+}

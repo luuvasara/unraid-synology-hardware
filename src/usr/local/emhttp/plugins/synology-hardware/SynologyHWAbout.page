@@ -1,0 +1,83 @@
+Menu="SynologyHW:6"
+Title="About"
+Tag="info-circle"
+---
+<?php
+/* About tab (2026.10.25j): running configuration, why only these, sources. */
+?>
+<?php require_once "$docroot/plugins/synology-hardware/include/synohw-page.php"; $P = synohw_page(); $S = $P['s']; $live = $P['live']; $cfg = $P['cfg']; $plugin = "synology-hardware"; synohw_page_head(); ?>
+
+<div class="title"><span class="left"><i class="title fa fa-cogs"></i>_(Running configuration)_</span></div>
+
+<?=synohw_live('cfgdiff')?>
+
+<div class="TableContainer--no-min-width">
+<table class="unraid synohw-doc">
+<thead><tr><td>Key (cfg file only)</td><td>Default</td><td>Meaning, and where the value comes from</td></tr></thead>
+<tbody>
+<tr><td>CPU_PERIOD</td><td>30 s</td><td class="whitespace-normal">How often the CPU temperature is read. scemd.xml: every cpu row has <code>period="30"</code>.</td></tr>
+<tr><td>DISK_PERIOD</td><td>60 s</td><td class="whitespace-normal">How often disks.ini and devs.ini are read. scemd uses <code>period="300"</code>; reading Unraid's file wakes nothing and costs nothing, so the plugin reacts faster.</td></tr>
+<tr><td>HYST</td><td>2 &deg;C</td><td class="whitespace-normal">Step down only this far below a row. scemd.xml: every row has <code>threshold="2"</code>.</td></tr>
+<tr><td>FAN_REASSERT</td><td>300 s</td><td class="whitespace-normal">Re-send the current <code>V&lt;nn&gt;</code> this often, in case the MCU reset. Plugin choice.</td></tr>
+<tr><td>UNREADABLE_FLOOR</td><td>70 %</td><td class="whitespace-normal">Minimum duty when one temperature source cannot be read, or when any disk spins without a reading (<code>temp="*"</code> with <code>spundown="0"</code>). Plugin choice: the table's middle step.</td></tr>
+<tr><td>NO_DATA_DUTY</td><td>99 %</td><td class="whitespace-normal">Duty when no temperature can be read at all. Plugin choice: the table's top step.</td></tr>
+<tr><td>MCU_LOG_SEC</td><td>600 s</td><td class="whitespace-normal">Without DEBUG, MCU byte counts are summarised in syslog this often.</td></tr>
+<tr><td>SWEEP_MIN_HOLD / SWEEP_MAX_HOLD</td><td>600 s / 1800 s</td><td class="whitespace-normal">Fan sweep: minimum and maximum time at each duty step. Plugin choice (see the Fan sweep help).</td></tr>
+<tr><td>SWEEP_SAMPLE</td><td>30 s</td><td class="whitespace-normal">Fan sweep: one CSV row this often.</td></tr>
+<tr><td>SWEEP_SETTLE_WINDOW / SWEEP_SETTLE_DELTA</td><td>600 s / 0.5 &deg;C</td><td class="whitespace-normal">Fan sweep: a step is settled when no temperature moved more than the delta over the window.</td></tr>
+<tr><td>DX_PERIOD</td><td>60 s</td><td class="whitespace-normal">How often the daemon reads the synology_dx unit and decides the DX1215 level (1..3600). Each read of values older than the module's 30 s cache costs one short libata EH round on the DX master port; below 30 s nothing is gained. Plugin choice (scemd uses <code>period="300"</code> for the DX1215 table).</td></tr>
+<tr><td>TICK</td><td>1 s</td><td class="whitespace-normal">Main loop granularity (the tests use 0.2).</td></tr>
+<tr><td>PLACEHOLDER_MAC_PREFIX</td><td>00:a0:c9:00:00</td><td class="whitespace-normal">Intel's NVM placeholder on these ports (measured). Only ports with this prefix are changed by the live apply.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="whitespace-normal">These keys are not on the form on purpose: changing them moves the plugin away from Synology's own values or exists for the tests. They are honoured when added by hand to <code>synology-hardware.cfg</code> (the parser checks each value: ranges in <code>synohw_cfg_ok</code>, <code>scripts/synohw-lib.sh</code>), and an Apply from this page keeps them (<code>update.php:82</code>, <code>:102-103</code>). The table above the defaults shows what the running daemon actually uses (<code>/var/run/synology-hardware/effective</code>, written at its start).</p>
+
+<div class="title"><span class="left"><i class="title fa fa-question-circle"></i>_(Why only these, and where the facts come from)_</span></div>
+
+<p class="whitespace-normal">Labels: <b>measured</b> = seen on this DS2415+ (under DSM 7.1.1: DSM's own <code>syno_microp_control</code> sent each command and synobios logged the exact bytes written to <code>/dev/ttyS1</code>, <code>research/2026-10-23-microp-commands.md</code>, reproducible with <code>tools/microp-map.sh</code>); <b>Synology file</b> = copied from DSM's files captured from this unit; <b>Unraid source</b> = <code>file:line</code> in the Unraid 7.3.4 payload, read, not run; <b>DS923+ code</b> = synodeb's code for another model; <b>hypothesis</b> = not tested. Repository paths are relative to the project, not to the NAS.</p>
+
+<div class="TableContainer--no-min-width">
+<table class="unraid synohw-doc">
+<thead><tr><td>MCU command (DSM name)</td><td>Byte(s)</td><td>Allowed</td><td>Sent by this plugin</td><td>Source</td></tr></thead>
+<tbody>
+<tr><td>ENABLE / DISABLE FAN_CHECKER</td><td>u / t</td><td>yes</td><td class="whitespace-normal">u at start and every KEEPALIVE_SEC; t at every stop</td><td>measured (u every ~10 s from scemd)</td></tr>
+<tr><td>POWER_LED_ON / _BLINKING / _OFF</td><td>4 / 5 / 6</td><td>yes</td><td class="whitespace-normal">4 at start; 5 at system shutdown</td><td>measured</td></tr>
+<tr><td>STATUS_LED_OFF, GREEN on / blink, ORANGE on / blink</td><td>7, 8 / 9, : / ;</td><td>yes</td><td class="whitespace-normal">8 at start and when an alert clears; ; in the ALERT band; 7 at system shutdown</td><td>measured</td></tr>
+<tr><td>ALERT_LED on / blink / off</td><td>LA1 / LA2 / LA3</td><td>yes</td><td>LA1 in the ALERT band, LA3 when it clears</td><td>measured</td></tr>
+<tr><td>FAN duty in %</td><td>V10 .. V99</td><td>yes (10..99 only)</td><td>from the fan table</td><td>measured (V99, V50)</td></tr>
+<tr><td>FAN PWM frequency</td><td>W20</td><td>W20 only</td><td>once at start</td><td>measured; every scemd row is NN%20hz</td></tr>
+<tr><td>MICROP_VERSION_REPORT</td><td>O</td><td>yes</td><td class="whitespace-normal">once at start; any reply shows up in the byte counts above</td><td>measured (the reply format is not decoded)</td></tr>
+<tr><td>BUZZER_OUT_SHORT</td><td>2</td><td>yes</td><td>only with BEEP_ON_START=yes</td><td>measured</td></tr>
+<tr><td>AC_RECOVERY on / off</td><td>q / p</td><td>yes</td><td>only with AC_RECOVERY on / off</td><td>measured</td></tr>
+<tr><td>WAKE_ON_LAN on / off</td><td>l / k</td><td>yes</td><td>only with WOL on / off</td><td>measured</td></tr>
+<tr><td class="whitespace-normal">USB LED, eSATA LED, buzzer pitch, SCHEDULE_ON on / off</td><td class="whitespace-normal">@ A B, LE1-3, , ., s / r</td><td>yes</td><td>never (allowed for later use; all harmless)</td><td>measured</td></tr>
+<tr><td class="whitespace-normal">LED brightness / slight tuning</td><td>M, P, Q, =</td><td class="red-text">refused</td><td>never</td><td class="whitespace-normal">measured, but not needed; the list is kept small</td></tr>
+<tr><td>BUZZER_OUT_LONG</td><td>3</td><td class="red-text">refused</td><td>never</td><td class="whitespace-normal">expected from older Synology models, but DSM did not send it when asked: never seen on the wire</td></tr>
+<tr><td>CPU_GRANT_PIC_TO_POWER_OFF_SYSTEM</td><td>1</td><td class="red-text">refused</td><td>never</td><td class="whitespace-normal">not measured on purpose (it powers the unit off); a third-party DS916+ page says 1 and C power off / reset at once. Unraid powers off and reboots through its own path.</td></tr>
+<tr><td>SYSTEM_RESET_FROM_CPU</td><td>C</td><td class="red-text">refused</td><td>never</td><td class="whitespace-normal">not measured on purpose (it reboots); C is what synodeb's DS923+ code uses (DS923+ code)</td></tr>
+<tr><td>fan duty below 10 %</td><td>V0 .. V9</td><td class="red-text">refused</td><td>never</td><td class="whitespace-normal">a bug must never be able to stop the fan; scemd's lowest row is 20 %</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="TableContainer--no-min-width">
+<table class="unraid synohw-doc">
+<thead><tr><td>Question</td><td>Answer</td></tr></thead>
+<tbody>
+<tr><td>Why an allow-list at all?</td><td class="whitespace-normal">Every byte goes through <code>synohw_send</code>, which checks <code>synohw_safe()</code> (<code>scripts/synohw-lib.sh</code>) and logs a refusal as "REFUSED command". Only bytes whose effect was measured on this unit can reach the MCU, and the two that power off or reset it cannot be sent by any bug or setting. The tests check the exact accepted and refused sets and every byte that reaches a fake MCU.</td></tr>
+<tr><td>Serial line</td><td class="whitespace-normal">/dev/ttyS1 is a 16550 at I/O 0x2F8, irq 3 (measured under DSM). 9600 8N1 raw comes from synodeb's DS923+ code; on this unit the K3 stream reads clean only at 9600 (measured 2026-10-24, noted in <code>scripts/synohw-daemon</code>; there is no separate log file of that test).</td></tr>
+<tr><td>Why no fan curve editor?</td><td class="whitespace-normal">The two tables are Synology's own for this chassis and its airflow (Synology file, scemd.xml:3-29); DSM itself offers a choice between tables, not a curve. A free curve would let a typo cook the disks, and nobody has measured a better one. The tables are fixed in code and the tests compare the bash copy and this page's copy with the XML. The timing keys (above) can be changed by hand.</td></tr>
+<tr><td>Why disks.ini, not smartctl?</td><td class="whitespace-normal">Reading SMART from a sleeping disk can wake it. emhttpd already polls the temperatures and writes <code>/var/local/emhttp/disks.ini</code>, with <code>temp="*"</code> for a disk that is spun down (Unraid source: the Dynamix <code>monitor</code> script reads it the same way, monitor:28, :83-96). Unassigned disks are in <code>devs.ini</code> (read the same way by the webGui, nchan/device_list:984). Only if both files are missing does the daemon fall back to <code>smartctl -n standby</code>, which skips sleeping disks and USB devices.</td></tr>
+<tr><td>Why the MACs come from the DOM</td><td class="whitespace-normal">That is where Synology stores them for this unit: the <code>vender</code> file on DOM partition 2, which DSM reads at every boot (measured, M1/M2). The NICs' own NVM holds only Intel's placeholder. The DOM is never opened for writing: the partition is set read-only before the read-only mount.</td></tr>
+<tr><td>Why a udev rule in /boot/config/udev?</td><td class="whitespace-normal">It is Unraid's own hook for custom rules: <code>rc.S.cont:33-40</code> installs <code>/boot/config/udev/*.rules</code> before udevd starts (<code>:51-55</code>) and long before <code>rc.inet1</code> (<code>rc.M:65-66</code>). The MAC is set as each port appears, so bond0, br0 and DHCP use the real MAC from the start. Plugins themselves are installed later, from <code>rc.local</code> (<code>rc.M:253-254</code>), after the network is up with the placeholders: doing it there would mean a network restart at every boot. Unraid's NIC naming (<code>70-persistent-net.rules</code>, saved in <code>/boot/config/network-rules.cfg</code>) keeps matching the placeholder seen at the add event; the details and the guard line are in the plugin README ("MAC fix: design").</td></tr>
+<tr><td>Why not HWADDR in network.cfg?</td><td class="whitespace-normal"><code>rc.inet1</code> does support <code>HWADDR[n]</code> (<code>rc.inet1:232</code>, <code>:532</code>), but the GUI's network page drops it: <code>update.ethernet.php:27</code> removes the interface's whole section before <code>update.php:102-103</code> writes back only the posted fields, and <code>Eth0.page</code> has no HWADDR field. The next network change in the GUI would silently undo the fix.</td></tr>
+<tr><td>Why a K05 shutdown hook, not emhttp events?</td><td class="whitespace-normal"><code>rc.6:23-25</code> runs <code>rc.sysvinit</code> first, which runs every executable <code>/etc/rc.d/rc6.d/K*</code> with "stop" (<code>rc.sysvinit:49-53</code>); <code>rc0.d</code> is a symlink to <code>rc6.d</code> and <code>rc.0</code> to <code>rc.6</code>, so the same hook runs at poweroff and reboot. Unraid uses this itself (<code>K10flash-backup</code>, <code>K20unraid-api</code>); K05 runs before them and before <code>rc.local_shutdown</code> stops the array (<code>rc.6:84-86</code>), so the fan is at 99 % for the whole array stop. emhttp's events (<code>stopping</code>, <code>stopping_array</code>, <code>stopped</code>, <code>emhttp_event:48-74</code>) fire on every array stop, also a plain Stop in the GUI while the server stays up, so they cannot tell "server going down" from "array stopped"; and emhttp waits for every event script (<code>emhttp_event:9</code>).</td></tr>
+<tr><td>Why syslog, no own log file?</td><td class="whitespace-normal">Unraid's System Log page, the diagnostics zip and a remote syslog server all read <code>/var/log/syslog</code>; a private file in <code>/var/log</code> would be invisible to them and need its own rotation. Everything is tagged <code>synology-hardware</code>: <code>grep synology-hardware /var/log/syslog</code>.</td></tr>
+<tr><td>Why a cron watchdog?</td><td class="whitespace-normal">Unraid's <code>update_cron</code> builds the crontab from <code>/boot/config/plugins/&lt;plugin&gt;/*.cron</code> of every registered plugin (<code>update_cron:6-16</code>). Every 5 min <code>rc.synology-hardware watchdog</code> restarts the daemon only if it died: not after a deliberate stop, not while ttyS1 is missing.</td></tr>
+<tr><td>Why this page only reads</td><td class="whitespace-normal">The live values come from files the daemon, emhttpd and the kernel already maintain. The status endpoint runs no command, takes no parameters, answers POST only (so Unraid's CSRF check in <code>local_prepend.php:33-51</code> always applies) and escapes every value.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p class="grey-text whitespace-normal">Not handled yet (plugin README, "Open questions"): the power button and other MCU events (the byte is not known), fan tach and fan-fail events, disk and eSATA fault LEDs, and what the MCU does when <code>u</code> stops. Hardware the kernel does not expose at all: see "Not available on this hardware" on the Hardware tab.</p>

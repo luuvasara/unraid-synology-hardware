@@ -1,0 +1,17 @@
+Menu="Buttons"
+Link="nav-user"
+---
+<?php
+/* 2026.10.26b: bay badges on Unraid's Main page. A Menu="Buttons" page with Link= is evaluated on every webGui page and renders no
+ * button, only <div class="nav-user"> (DefaultPageLayout.php:147-157, Navigation/Main.php:46-71); Unraid's own Community Applications
+ * helper (dynamix.plugin.manager/PluginHelpers.page) uses the same hook. Here it prints the badge script on the Main page only, and
+ * only while MAIN_BADGES is not "no" in synology-hardware.cfg. Nothing is written anywhere. */
+$synohw_b = @parse_ini_file('/boot/config/plugins/synology-hardware/synology-hardware.cfg') ?: [];
+if (($task ?? '') === 'Main' && ($synohw_b['MAIN_BADGES'] ?? 'yes') !== 'no'):
+  $synohw_v = @filemtime("$docroot/plugins/synology-hardware/js/synohw-badges.js") ?: 0;
+?>
+<style>
+.synohw-bay-badge{display:inline-block;margin-left:.6rem;padding:0 .5rem;border:1px solid currentColor;border-radius:3px;font-size:1.1rem;line-height:1.5;font-weight:bold;letter-spacing:normal;white-space:nowrap;vertical-align:baseline}
+</style>
+<script src="/plugins/synology-hardware/js/synohw-badges.js?v=<?=$synohw_v?>"></script>
+<?php endif; ?>

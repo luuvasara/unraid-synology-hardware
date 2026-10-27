@@ -1,0 +1,101 @@
+#!/bin/bash
+# synohw-report - read-only hardware collector for "Report unsupported hardware" (synology-hardware 2026.10.26b). Written: 2026-10-26.
+# Prints a plain-text report to stdout. It is run only by include/report.php (Report tab, button "Collect"), with no argument, and
+# its output goes through the anonymiser (include/synohw-anon.php) before anything is shown; nothing is stored on the flash and
+# nothing leaves the NAS (the page offers Copy / Download / a GitHub link in the user's own browser).
+# READ-ONLY: reads /sys, /proc and the ACPI table UEFI1, runs lspci, lsusb, ethtool -i (driver info ioctl) and dmesg. It opens no
+# disk (no smartctl, no hdparm: nothing can wake a disk) and writes to no tty: serial ports are listed from /proc/tty/driver/serial
+# and /sys/class/tty only. Every command has a timeout. Overrides (tests): SYNOHW_SYS, SYNOHW_PROC, SYNOHW_UEFI1, SYNOHW_BIN_*.
+SYS=${SYNOHW_SYS:-/sys}; PROC=${SYNOHW_PROC:-/proc}; UEFI1=${SYNOHW_UEFI1:-$SYS/firmware/acpi/tables/UEFI1}
+LSPCI=${SYNOHW_BIN_LSPCI:-lspci}; LSUSB=${SYNOHW_BIN_LSUSB:-lsusb}; DMESG=${SYNOHW_BIN_DMESG:-dmesg}; ETHTOOL=${SYNOHW_BIN_ETHTOOL:-ethtool}
+T() { timeout 20 "$@" 2>&1; }
+sec() { printf '\n### %s\n' "$1"; }
+rd() { [ -r "$1" ] && tr -d '\0' <"$1" 2>/dev/null | head -c 4096; }
+
+echo "Synology Hardware plugin: hardware report"
+echo "generated: $(date -u '+%Y-%m-%d %H:%M UTC')"
+sec "versions"
+echo "unraid: $(sed -n 's/^version="\(.*\)"/\1/p' /etc/unraid-version 2>/dev/null)"
+echo "kernel: $(uname -r)"
+for p in synology-hardware synology-expansion; do
+  f=/var/log/plugins/$p.plg; [ -e "$f" ] && echo "plugin $p: $(sed -n 's/.*<!ENTITY version *"\([^"]*\)".*/\1/p' "$f" | head -1)"
+done
+[ -d "$SYS/module/synology_dx" ] && echo "module synology_dx: $(rd "$SYS/module/synology_dx/version") srcversion $(rd "$SYS/module/synology_dx/srcversion")"
+
+sec "DMI"
+if [ -d "$SYS/class/dmi/id" ]; then
+  for k in sys_vendor product_name product_version product_serial product_uuid board_vendor board_name board_version board_serial chassis_serial bios_vendor bios_version bios_date; do
+    [ -r "$SYS/class/dmi/id/$k" ] && echo "$k: $(rd "$SYS/class/dmi/id/$k")"
+  done
+else echo "no /sys/class/dmi/id (no SMBIOS entry point)"; fi
+
+sec "BIOS (Insyde \$BVDT\$ in ACPI UEFI1)"
+if [ -r "$UEFI1" ]; then
+  tr '\0' '\n' <"$UEFI1" | sed -n '/^\$BVDT\$$/,/^\$ENDOFBVDT/p' | grep -aE '^\$[A-Za-z0-9._-]+$' | grep -avE '^\$(BVDT|ENDOFBVDT)\$?$' | head -3 | cut -c2- | paste -sd' ' -
+else echo "UEFI1 not readable or absent"; fi
+ls "$SYS/firmware/acpi/tables" 2>/dev/null | paste -sd' ' -
+
+sec "CPU"
+grep -m1 '^model name' "$PROC/cpuinfo"; grep -m1 '^cpu family' "$PROC/cpuinfo"; grep -m1 '^model[[:space:]]*:' "$PROC/cpuinfo"; grep -m1 '^stepping' "$PROC/cpuinfo"
+grep -m1 '^microcode' "$PROC/cpuinfo"; echo "cpus: $(grep -c '^processor' "$PROC/cpuinfo")"
+echo "memory: $(awk '/^MemTotal/ {printf "%.1f GiB", $2/1048576}' "$PROC/meminfo")"
+
+sec "PCI host bridge revision (AVR54)"
+echo "00:00.0 $(rd "$SYS/bus/pci/devices/0000:00:00.0/vendor"):$(rd "$SYS/bus/pci/devices/0000:00:00.0/device") rev $(rd "$SYS/bus/pci/devices/0000:00:00.0/revision")"
+
+sec "lspci -nn"; T "$LSPCI" -nn
+sec "lspci -tvnn"; T "$LSPCI" -tvnn
+
+sec "ATA ports"
+for a in "$SYS"/class/ata_port/ata*; do
+  [ -e "$a" ] || continue; n=${a##*/}
+  pci=$(readlink -f "$a/device" | grep -oE '[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]' | tail -1)
+  spd=$(for l in "$SYS"/class/ata_link/link${n#ata}*; do [ -e "$l" ] && printf '%s=%s ' "${l##*/}" "$(rd "$l/sata_spd")"; done)
+  echo "$n port_no=$(rd "$a/port_no") pci=$pci $spd"
+done
+sec "SCSI disks (model, firmware rev, path; no serial is read)"
+for b in "$SYS"/block/sd*; do
+  [ -e "$b/device" ] || continue
+  p=$(readlink -f "$b/device"); d=$b/device
+  echo "${b##*/}: $(rd "$d/vendor" | xargs) $(rd "$d/model" | xargs) rev $(rd "$d/rev" | xargs)"
+  echo "  $(grep -oE '[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]/.*' <<<"$p" | sed -E 's#/(scsi_)?(host[0-9]+|target[0-9:]+|[0-9]+:[0-9]+:[0-9]+:[0-9]+)(/|$)#/#g')"
+done
+
+sec "synology_dx (expansion driver)"
+if [ -d "$SYS/kernel/synology_dx" ]; then
+  for h in "$SYS"/kernel/synology_dx/host* "$SYS"/kernel/synology_dx/unit; do
+    [ -d "$h" ] || continue; echo "[${h##*/}]"
+    for f in emid model unique ata_port gscr_0 gscr_1 gscr_2 gscr_32 gscr_33 gscr_64 gscr_96 page0 page1 page2 page3 page4 fan_level fan_code power_on psu1 psu2 switch_mode led_mask fault last_error master_host; do
+      [ -r "$h/$f" ] && echo "  $f: $(rd "$h/$f" | head -1)"
+    done
+    for f in "$h"/*serial*; do [ -r "$f" ] && echo "  ${f##*/}: $(rd "$f" | head -1)"; done
+  done
+  [ -d "$SYS/kernel/synology_dx/ds" ] && for c in "$SYS"/kernel/synology_dx/ds/*; do [ -d "$c" ] && echo "[ds ${c##*/}] leds_enabled=$(rd "$c/leds_enabled") fault_mask=$(rd "$c/fault_mask")"; done
+  [ -r "$SYS/kernel/synology_dx/ds/pch_led_enable" ] && echo "pch_led_enable: $(rd "$SYS/kernel/synology_dx/ds/pch_led_enable")"
+else echo "not loaded"; fi
+
+sec "serial ports (listed only; nothing is written to any tty)"
+grep -v 'uart:unknown' "$PROC/tty/driver/serial" 2>/dev/null | sed -E 's/ (tx|rx|fe|pe|brk|oe):[0-9]+//g'
+ls -d "$SYS"/class/tty/ttyUSB* "$SYS"/class/tty/ttyACM* 2>/dev/null | sed 's#.*/##'
+
+sec "hwmon sensors"
+for h in "$SYS"/class/hwmon/hwmon*; do
+  [ -e "$h" ] || continue; printf '%s %s:' "${h##*/}" "$(rd "$h/name")"
+  for i in "$h"/temp*_input "$h"/fan*_input "$h"/pwm[0-9] "$h"/*_alarm; do [ -r "$i" ] && printf ' %s=%s' "${i##*/}" "$(rd "$i")"; done; echo
+done
+
+sec "lsusb"; T "$LSUSB"
+sec "lsusb -t"; T "$LSUSB" -t
+
+sec "network ports (driver, PCI id)"
+for n in "$SYS"/class/net/*; do
+  [ -e "$n/device" ] || continue; d=$(readlink -f "$n/device")
+  echo "${n##*/}: driver $(basename "$(readlink -f "$n/device/driver")") pci $(basename "$d") id $(rd "$d/vendor"):$(rd "$d/device") speed $(rd "$n/speed")"
+  T "$ETHTOOL" -i "${n##*/}" | grep -E '^(driver|version|firmware-version|bus-info):' | sed 's/^/  /'
+done
+
+sec "RTC"; grep -E 'batt_status|rtc_date' "$PROC/driver/rtc" 2>/dev/null
+sec "microcode"; rd "$SYS/devices/system/cpu/cpu0/microcode/version"; echo
+
+sec "dmesg (relevant lines)"
+T "$DMESG" | grep -iE 'DMI:|BIOS|microcode|ata[0-9]+(\.[0-9]+)?:|scsi [0-9]+:|port multiplier|pmp|synology|ahci|9215|9235|9705|igb|usb [0-9-]+(\.[0-9]+)*: (new|device descriptor|unable|Product|Manufacturer|SerialNumber)|rtc_cmos|ttyS|EDAC|mce:|AER' | head -400

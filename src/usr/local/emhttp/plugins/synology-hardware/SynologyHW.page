@@ -1,0 +1,6 @@
+Menu="Utilities"
+Type="xmenu"
+Title="Synology Hardware"
+Icon="synology-hardware.png"
+Tag="server"
+Tabs="true"

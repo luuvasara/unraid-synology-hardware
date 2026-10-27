@@ -1,0 +1,163 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+  <!ENTITY name    "synology-hardware">
+  <!ENTITY version "2026.10.26g">
+  <!ENTITY gitURL  "https://raw.githubusercontent.com/luuvasara/unraid-synology-hardware/main">
+  <!ENTITY pluginURL "&gitURL;/synology-hardware.plg">
+  <!ENTITY pkg     "synology-hardware-&version;-x86_64-1.txz">
+  <!ENTITY pkgURL  "&gitURL;/packages/&pkg;">
+  <!ENTITY md5     "b99e435018385b65370b6b31b1d35f11">
+]>
+<!-- Written: 2026-10-24. Hardware support for the Synology DS2415+ (front-panel MCU, fan, LEDs, real MACs).
+     Install: Plugins, Install Plugin, https://raw.githubusercontent.com/luuvasara/unraid-synology-hardware/main/synology-hardware.plg
+     (or plugin install <that URL>); the package is downloaded from packages/ in the same repository and
+     MD5-checked. Bump &version; on EVERY change.
+     &md5; is filled in by build.sh from the built txz; never edit it by hand. -->
+<PLUGIN name="&name;" author="synology-hardware project" version="&version;" min="7.0.0" launch="Settings/SynologyHW" icon="synology-hardware.png" pluginURL="&pluginURL;">
+
+<CHANGES>
+###2026.10.26g
+- Published: install and update from GitHub (https://github.com/luuvasara/unraid-synology-hardware). The .plg has its pluginURL, so Unraid's update check sees new versions; the package is downloaded from the repository's packages/ folder and checked against its MD5 before it is installed. The Report tab's "Open GitHub issue" link points to the same repository. No change in what the plugin does.
+
+###2026.10.26e
+- Main page badges no longer blink: they are re-added in the same step as Unraid's refresh of the disk tables, before the page is drawn, instead of 150 ms later.
+
+###2026.10.26d
+- Hardware tab: the AVR54 setting's help block has a name the page tests recognise (no change in behaviour).
+
+###2026.10.26c
+- Main page badges sit next to the device name (Disk 1, Dev 2): the identification cell is clipped by Unraid, so a badge there was hidden for array disks. Report preview: monospace, plain heading. Drawing: the LAN label no longer touches the rear caption.
+
+###2026.10.26b
+- Bay map (Overview): one row per disk in a bay of either unit: bay, the device as Unraid's Main page shows it, sdX, the Unraid slot (Parity, Disk N, a pool, or Unassigned (Dev N), from disks.ini / devs.ini), the temperature Unraid has cached (no disk is ever woken) and the bay LED. Each tray in the drawing shows the same facts when hovered or focused.
+- Main page bay badges: a small "DS 1" / "DX 8" after each disk's device name on Unraid's Main page. Visual only (a Menu="Buttons" page, the hook Unraid's own plugin helper uses, loads a script on Main that asks the plugin's read-only bays.php endpoint); nothing in Unraid is changed, and nothing is added if the page looks different. Setting on the Overview tab: Bay badges on the Main page (MAIN_BADGES, default yes).
+- Report tab ("Report unsupported hardware"): collects a read-only hardware report (DMI, the BIOS version from the Insyde BVDT block, CPU and microcode, memory, lspci, SATA/disk topology, the expansion driver's registers, serial ports listed only, hwmon, lsusb, network drivers, the RTC battery bit, relevant dmesg lines, plugin and module versions, the plugin's own view), anonymises it on the server (serials, MACs, WWNs, UUIDs, labels, hostname, IPs, user names become &lt;serial-1&gt;, &lt;mac-1&gt; ...), and offers Copy, Download (.txt) and Open GitHub issue (the issue form opens in your browser; a report too long for a link is downloaded to attach). Nothing is sent from the server.
+- Known issues and firmware (Hardware tab): AVR54 from the host bridge revision (B0 = warning with the DS2415+ fix instructions and Intel's spec update 329460, C0 = fixed silicon, no Atom C2000 = not affected), a setting "I've fitted the fix" (AVR54_FIXED) that turns the warning into "resistor fitted (owner confirmed)"; AVR49 and AVR35 as information; the RTC battery bit. Firmware: BIOS (M.211 newest known), microcode (0x12d newest for the C2538), disk firmware warnings from smartmontools (from the cache of awake disks only), and the parts that cannot be checked, with the reason. The data ships with the plugin.
+- Drawing: the expansion cable takes the short path, over the top and straight down over the DX1215 rear onto its expansion port, labelled "Expansion cable (InfiniBand, SATA ×4)" (hover: Synology Cable InfiniBand SATAx4).
+- Bay LED tables: an empty bay now reads "dark (no disk)" instead of "Green: on".
+- Inventory cache: also reads the BIOS string (ACPI UEFI1), USB enumeration errors and the RTC line from dmesg, and the igb port count (firmware.txt).
+###2026.10.26a
+- Bay LEDs: the daemon now owns the orange (fault) LED of every bay, as it owns the fans. Every 60 s (LED_PERIOD) it reads what Unraid already has, without touching a disk: a disk Unraid has disabled or marks invalid/wrong (or shows red), or whose SMART record has an attribute failing now (or overall health FAILED), gets orange; every other bay is cleared. DS2415+ and DX1215 alike, through the synology_dx driver of the Synology Expansion Unit Driver plugin (which switches the LEDs on at boot). New setting on the DS2415+ tab: Orange bay LED from disk health (LED_HEALTH, default yes). Stopping the daemon clears the orange it set.
+- Drawing: each tray's LED shows the state the driver has set (green, orange, off) and the bay's description says why; the legend explains the three. New Bay LEDs table on the DS2415+ and DX1215 tabs (bay, disk, green, orange, health), with the DS2415+ orange enable (PCH GPIO 49) state and a link to the LED on/off settings.
+- Confirmed at the box on 2026-10-26 and labelled so: the DS2415+ and DX1215 bay numbers (blink count; "not verified" and "inferred" removed), the DX1215 rear switch (bit 1 = DEFAULT, shown as "DEFAULT (verified)"), LAN 1 = eth0 (verified). LAN 2-4 = eth1-3 stay marked as inferred from PCI order.
+
+###2026.10.25k
+- Overview drawing redrawn after Synology's own installation guides (DS2415+ Quick Installation Guide, DX1215 User's Guide): each unit is shown from the front and from behind. Front: the 12 trays in 2 columns of 6, numbered 1 (top left) to 12 (bottom right) row by row as Synology numbers them, each with its drive LED and lock; the top strip with STATUS, ALERT, the power button and the LAN1-LAN4 lights (DX1215: LINK).
+- DS2415+ rear: the two-fan module, the power inlet, and the port column in its real order: USB 3.0 x4, expansion port, console and RESET, LAN 1-4 from top to bottom with live link and speed. The rear USB sockets show how many are in use and name the devices (which socket each is in is not known).
+- DX1215 rear: the two fans (alarm bits, commanded level), the power inlet, the expansion port and the DEFAULT/MANUAL switch with the bit the unit reads (which position that is, is not verified). The expansion cable runs from the DS2415+ expansion port to the DX1215 expansion port.
+- Bay numbers: the DS2415+ ones follow DSM's disk index map (the backplane wiring was not checked by hand); the DX1215 ones are inferred. LAN 1-4 are shown as eth0-3 in PCI order; that mapping is not verified, and the page says so.
+- Settings page in tabs, the Unraid way (a header-only xmenu parent like Power Options): Overview, DS2415+, DX1215, History, Hardware, About. Every value of 2026.10.25i is still there, moved to the tab of the unit it belongs to.
+- Overview: a live drawing of both units (bays with each disk and its temperature, fans turning at the commanded level, network ports with link and speed, the expansion cable), one card per unit (fan mode, output, reason, hottest temperatures, alarms, LEDs, health) and the plugin's health. Only the DS2415+ and the DX1215 are drawn; any other unit gets a plain picture with its name. Bay positions are not verified yet.
+- Each unit has its own badge (icon and name) on every section title, mixed table row and graph legend. The DS2415+ and DX1215 settings have their own forms (same cfg file, same Apply); temperatures are split per unit, the DX1215 disks with the margins to the DX1215 table.
+- History: one chart set per unit on the same time axis (main unit: CPU, its disks, its fan duty; expansion unit: its disks with the DX1215 table rows, its fan level).
+- The live poll asks only for what the open tab shows; a tab click updates it at once. With "reduce motion" set, the drawing moves 4 times slower instead of stopping.
+- Hardware tab: the main-unit model is recognised by its PCI controllers (the plugin reads no model string), the expansion unit by the driver.
+###2026.10.25i
+- Renamed: the plugin is now synology-hardware ("Synology Hardware"): synology-hardware.plg, /usr/local/emhttp/plugins/synology-hardware, /boot/config/plugins/synology-hardware, /etc/rc.d/rc.synology-hardware, K05synology-hardware, /var/run/synology-hardware, syslog tag synology-hardware, udev rule 70-synology-hardware-mac.rules. The settings page stays at Settings, Utilities, Synology Hardware.
+- Migration, once: the install copies /boot/config/plugins/synology-hw/synology-hw.cfg and its sweep-* results into the new flash dir when they are not there yet (copied, never moved or overwritten), stops a still running old synology-hw daemon (a deliberate stop, so its watchdog leaves it alone) and removes the old udev rule files. Remove the old plugin with: plugin remove synology-hw.plg (best before installing this one).
+- Plugins list: a title and one-sentence description (README.md in the plugin dir), the plugin icon, author no longer "local".
+- The DX1215 interface is unchanged: /sys/kernel/synology_dx and hwmon synology_dx (the expansion plugin is being renamed separately).
+###2026.10.25h
+- New: DX1215 section (live) through the separate synology-dx plugin's module: model and unique id, master port multiplier, fan level and CPLD code, fan 1 / fan 2 alarm, power, PSU 1/2 and switch mode as raw bits (meaning not known, said so), last module error, module/plugin version, the DX1215 disks (box from sysfs). Without the module: what is missing and why, and nothing is written.
+- New: DX1215 fan control by the daemon. DX_MODE AUTO = DSM's DX1215 table (scemd.xml:357-370: low / middle from 48 C / full from 55 C, 2 C hysteresis) on the DX1215 disks only; MANUAL = DX_LEVEL full|middle|low; LINKED = follows the DS2415+ duty (below 40 low, 40-69 middle, 70 and up full). Every mode: a fan alarm bit -> full (plus syslog and an Unraid notification), a DX disk without a reading -> at least middle, 61 C -> full. stop is never written; fan_level is written only when the wanted level differs, and every FAN_REASSERT. Daemon stop -> DX full. DX_PERIOD (60 s) sets how often the unit is read.
+- New: DS2415+ fan modes. DS_MODE AUTO (the table) or MANUAL (DS_DUTY 10..99); the ALERT band, unreadable sources and no data still raise MANUAL. DS_FLOOR 10..20 lowers the table's lowest row in AUTO (default 20 = DSM), with the measured fan-sweep numbers in its help.
+- New: "Fans now" table (both boxes: mode, input, output, why) at the top; DX1215 level chart (read back and wanted, fan alarm bands) on the history time axis. History line: @dsm, @dx, @dxwant, @dxwhy, @dxal, @dxt (older parsers skip them).
+- Fix: PCIe table showed "Unknown x0 / Unknown x255" for the on-chip I354 NICs; they now show "no PCIe link (on-chip)" like the other SoC devices.
+###2026.10.25g
+- New: Hardware section on the settings page: system (memory, uptime, kernel, BIOS, DOM, MCU byte rates and version-query status), CPU frequency/governor/C-state residency/ACPI trip points, PCIe link now vs maximum with AER counters, SATA link speed per ata link incl. the DX1215 port-multiplier links and the box of each, SMART summary of awake disks (health, power-on hours, reallocated/pending/CRC, load cycles with the normalized value, SATA phy counters), network ports with error counters and Wake-on-LAN, USB tree, and what is not available on this hardware and why (with sources).
+- SMART and ethtool are read by the new scripts/synohw-inventory, started by the daemon every INVENTORY_PERIOD (default 600 s) or by rc.synology-hw inventory: smartctl -n standby only for disks Unraid reports awake, so a sleeping disk is never woken. The page only reads the cache; it refreshes every 60 s, the 5 s poll is unchanged.
+- Page: muted and orange text in the plugin's blocks use contrast-checked tokens (white theme orange was 2.1:1).
+###2026.10.25f
+- New: history graphs on the settings page. Temperatures over time (CPU, optional per core, every disk labelled with model, serial and its box: DS2415+ internal or DX1215, decided from sysfs, never from the sdX name) with the running fan table's steps and the alert as dashed reference lines; the fan duty sent (step chart) on the same time axis, plus the table duty, so temperature and fan can be compared. 1 h / 6 h / 24 h; new samples are appended by the existing 5 s poll.
+- Exact values with units on hover (tooltip and a legend table with series checkboxes); keyboard: Tab to a graph, Left/Right/Home/End. A gap = no sample; a disk in standby shows "standby (not woken)"; fan sweeps are shaded. Empty, loading and error states say what is going on (history starts empty at every boot).
+- Fan sweep panel: graphs of sweep.csv (temperatures with the sweep's abort limits, duty per step).
+- History line: new tokens @mode, @why, @want, @sweep and core:SENSOR (table mode, why the table chose its duty, the table duty, the sweep step, every CPU sensor). Their keys contain '@' or ':', which the previous parser skips, so old and new lines read the same.
+- Status endpoint: action=history / action=sweep and range/since parameters (validated, bounded replies); still POST only and read-only.
+- Charts: uPlot 1.6.32 (MIT) shipped inside the plugin; nothing is loaded from the internet.
+
+###2026.10.25e
+- All-sensors table: numbers and headers no longer split mid-value ("33 °C" broke into "33 °" / "C" at 1280 px, seen in the real webGui after 25d). Cells wrap only between words.
+
+###2026.10.25d
+- New: fan sweep, a characterisation mode to find out how low the fan can go. rc.synology-hw sweep start [duty ...] | stop | status (default plan 20 15 12 10 20 40 70 99 %; duties 10..99, never below 10). The running daemon holds each duty at least SWEEP_MIN_HOLD (600 s), advances early once no temperature moved more than 0.5 C in 600 s, at most SWEEP_MAX_HOLD (1800 s), and records a row every 30 s (CPU max and each core, each disk by serial/id, MCU byte counts) in /var/run/synology-hw/sweep.csv.
+- Safety: a disk >= 46 C, CPU >= 65 C, an unreadable temperature, any MCU byte other than 0x33/0x4b (possible fan-fail alarm) or a write failure aborts the sweep at once, resends the table duty and logs the reason. A daemon stop/restart or sweep stop ends it too; nothing survives a restart or reboot. The sweep duty follows FAN_REASSERT.
+- At the end (done, aborted or stopped) a per-step summary (start/end/min/max/slope per CPU and disk, settled yes/no) is written to /var/run/synology-hw/sweep-summary.txt and csv + summary are copied once to /boot/config/plugins/synology-hw/sweep-YYYYmmdd-HHMM.{csv,txt}: the only flash write.
+- Settings page: read-only fan sweep panel in the live status with help (what it does, safety rules, sources); start stays on the command line.
+- Fix: the all-sensors table was 943 px wide in a 903 px container at 1440 px and its last column was clipped; cells now wrap and the table stays inside its container.
+- Tests: tests/sweep_pty_test.py (fake MCU on a pty) with a mutation check.
+
+###2026.10.25c
+- Fix (safety): the fan now follows the real disks. Until now only the array file disks.ini was read; with the array unassigned (as measured on this DS2415+ on 2026-10-25) it holds only empty slots and the flash, all with temp "*", so the plugin reported "standby" and kept the fan at 20 % whatever the hard disks did.
+- Unassigned disks (devs.ini) are now read as well. Empty slots (DISK_NP...), the flash and USB devices (the DOM, sticks; recognised from /sys, not from the sdX name) are no fan inputs.
+- A spinning disk that has no temperature (temp "*" with spundown 0) is no longer taken for a sleeping one: the fan goes to at least 70 % (UNREADABLE_FLOOR). Sleeping disks (spundown 1) still count as cool and are never woken.
+- Settings page and temperature history list only real disks; unassigned disks by device name with their id, "no reading" shown in orange.
+- rc.synology-hw status no longer reports a failure in the first seconds after start, before the daemon's first state file exists.
+
+###2026.10.25b
+- Settings page explains every setting in Unraid's own help blocks (Help button, or click a label): what it does, the exact MCU bytes, the default and why, where the knowledge comes from (DSM's scemd.xml for the DS2415+, measured on this unit, DS923+ code, hypothesis) and the risk.
+- Live values, refreshed every 5 s: daemon, ttyS1, keepalive, status LED, MCU bytes, plugin version, udev rule, watchdog cron, ports with PCI address, current, DOM and NVM MAC.
+- Next to the fan table setting: CPU and every disk temperature now (sleeping disks shown as standby, never woken), what LOW and HIGH would choose at those temperatures and from which table row, distance to the alert and shutdown thresholds, and the daemon's own decision.
+- Last-24-h min/max per sensor from a small history file the daemon keeps in /var/run (RAM only, never on the flash, empty after a reboot).
+- "Why only these" section: the MCU allow-list (and why 1, C, 3 and V below 10 are refused), why no fan curve editor, why the MACs come from the DOM and the udev rule, why a K05 shutdown hook, why syslog; with file:line sources.
+- The running configuration is shown next to the saved one, so an unapplied or refused value is visible.
+- The daemon writes state, effective settings, MCU byte counts and the history to /var/run/synology-hw for the page. Nothing else changed in what it sends to the MCU.
+- The status endpoint only reads files and answers POST only (Unraid's CSRF check); every value is escaped.
+
+###2026.10.25a
+- Real MACs the Unraid way: a udev rule on the flash (/boot/config/udev/70-synology-hw-mac.rules) sets them when the ports appear at boot, before bond0/br0/DHCP. No network restart at boot any more.
+- First install applies the MACs live once, detached: rc.inet1 br0_stop, ip link set per port, rc.inet1 br0_start (skipped while Docker or VMs run; then the next boot does it).
+- Post-install never fails the plugin (problems go to syslog), so a hardware problem cannot move the .plg to plugins-error at boot.
+- MD5 of the package checked by the plugin manager; build.sh fills it in.
+- Logging to syslog (tag synology-hw) instead of /var/log/synology-hw.log; raw per-byte MCU log only with DEBUG=yes.
+- Settings page (Settings, User Utilities, Synology Hardware): fan table, keepalive, MAC fix, debug and the other options; status line and decoded DOM MACs.
+- Watchdog cron every 5 min restarts a daemon that died (not one stopped on purpose).
+- The cfg is parsed, no longer executed; unknown keys and bad values are ignored and logged.
+- Remove: also deletes the udev rule, cron file and runtime dir; removepkg by exact name.
+
+###2026.10.24b
+- MCU byte log rate-limited: the MCU streams "K3" nonstop, so each byte value is logged once, then counts every 10 minutes.
+
+###2026.10.24a
+- First version: MCU keepalive, status LED, fan from temperatures, shutdown hook, real MACs from the DOM.
+</CHANGES>
+
+<!-- pre-install: dirs, version-preserving cleanup of old packages on flash -->
+<FILE Run="/bin/bash">
+<INLINE>
+mkdir -p /boot/config/plugins/&name;
+ls /boot/config/plugins/&name;/&name;-*-x86_64-1.txz 2>/dev/null | grep -v '&version;' | xargs -r rm -f
+</INLINE>
+</FILE>
+
+<!-- payload: downloaded to the flash (MD5 checked after the download, and for the flash copy at every boot), then upgradepkg -->
+<FILE Name="/boot/config/plugins/&name;/&pkg;" Run="upgradepkg --install-new --reinstall">
+<URL>&pkgURL;</URL>
+<MD5>&md5;</MD5>
+</FILE>
+
+<!-- post-install: never fails (a failing Run at boot moves the .plg to plugins-error) -->
+<FILE Run="/bin/bash">
+<INLINE>
+/usr/local/emhttp/plugins/&name;/scripts/synohw-postinstall || logger -t &name; "post-install returned $? (ignored)"
+exit 0
+</INLINE>
+</FILE>
+
+<!-- remove: stop the daemon (sends V99 and 't', nothing else), drop rule, cron, runtime dir and package.
+     Left behind on purpose: the cfg on flash (for a reinstall), the MCU state (fan 99 %, fan checker
+     disarmed, LEDs as last set), the real MACs on the live ports until the next reboot. -->
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+/etc/rc.d/rc.&name; stop
+rm -f /boot/config/udev/70-synology-hardware-mac.rules /etc/udev/rules.d/70-synology-hardware-mac.rules /boot/config/udev/70-synology-hw-mac.rules /etc/udev/rules.d/70-synology-hw-mac.rules
+rmdir /boot/config/udev 2>/dev/null
+rm -f /boot/config/plugins/&name;/&name;.cron
+rm -rf /var/run/&name;
+removepkg &name;-&version;-x86_64-1
+rm -f /boot/config/plugins/&name;/&pkg;
+echo "synology-hardware removed. Config kept at /boot/config/plugins/&name;/&name;.cfg"
+exit 0
+</INLINE>
+</FILE>
+
+</PLUGIN>

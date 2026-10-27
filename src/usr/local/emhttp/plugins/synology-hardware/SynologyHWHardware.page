@@ -1,0 +1,47 @@
+Menu="SynologyHW:5"
+Title="Hardware"
+Tag="microchip"
+---
+<?php
+/* Hardware tab (2026.10.25j): inventory (include/synohw-hw.php), refreshed every 60 s while visible. */
+?>
+<?php require_once "$docroot/plugins/synology-hardware/include/synohw-page.php"; $P = synohw_page(); $S = $P['s']; $live = $P['live']; $cfg = $P['cfg']; $plugin = "synology-hardware"; synohw_page_head(); ?>
+
+<div class="title"><span class="left"><i class="title fa fa-exclamation-triangle"></i>_(Known issues and firmware)_</span><span class="synohw-live-state grey-text"></span></div>
+
+<?=synohw_live('issues')?>
+
+:synohw_issues_plug:
+> **Known issues** come from Intel's Atom C2000 Specification Update 329460 (AVR54, AVR49, AVR35) and from owners' reports (RTC battery); the rules and quotes are in `research/2026-10-26-known-hw-issues.md`, shipped as `data/known-hw-issues.json`. **AVR54** is decided by the PCI revision of the host bridge 00:00.0 (02 = B0, affected; 03 = C0, fixed silicon); whether the board fix (a resistor on the LPC clock) is fitted cannot be seen by software, hence the setting below.
+>
+> **Firmware**: the BIOS version from the Insyde `$BVDT$` block in ACPI table UEFI1, the loaded microcode, and the disks' `smartctl -i` drive-database warnings (`==> WARNING:` lines), compared with `data/firmware-versions.json`. The disk rows use the daemon's cache: only disks Unraid reports awake are queried, with `-n standby`, so nothing is woken.
+:end
+
+<form markdown="1" name="synohw_avr54" method="POST" action="/update.php" target="progressFrame">
+<input type="hidden" name="#file" value="<?=$plugin?>/<?=$plugin?>.cfg">
+
+_(AVR54 board fix)_ (AVR54_FIXED):
+: <select name="AVR54_FIXED" aria-label="AVR54 board fix (AVR54_FIXED)">
+  <?=mk_option($cfg['AVR54_FIXED'], "no", "not fitted, or not known (default): show the warning")?>
+  <?=mk_option($cfg['AVR54_FIXED'], "yes", "I've fitted the fix (resistor): show \"resistor fitted (owner confirmed)\"")?>
+  </select>
+
+:synohw_avrfix_plug:
+> Only changes what this page says about AVR54 on B0 silicon. Nothing is sent to the hardware and the daemon is not restarted (Apply only saves the key to `synology-hardware.cfg`).
+:end
+
+&nbsp;
+: <span class="inline-block"><input type="submit" value="_(Apply)_" disabled><input type="button" value="_(Done)_" onclick="done()"></span>
+</form>
+
+<div class="title"><span class="left"><i class="title fa fa-microchip"></i>_(Hardware)_</span><span id="synohw-hw-state" class="grey-text"></span></div>
+
+<div id="synohw-hw" class="synohw-hw-box"><?=synohw_render_hw(synohw_hw_collect(synohw_paths()))?></div>
+
+:synohw_hw_plug:
+> **What this is.** Everything this DS2415+ (and a DX1215 behind it) tells Linux about itself, read-only: `/sys` and `/proc` files, plus a small cache in `/var/run/synology-hardware/inventory` that the daemon refreshes every `INVENTORY_PERIOD` seconds (600 by default; `rc.synology-hardware inventory` refreshes it at once). The cache holds what needs a command: `smartctl -n standby -i -H -A -l error -l sataphy` for the disks Unraid reports awake, and `ethtool <port>` for Wake-on-LAN. A disk in standby is never queried, and `-n standby` makes smartctl skip one that fell asleep in the meantime, so this section can never wake a disk. The page itself runs no command.
+>
+> **Sources.** The choice of items, how each was measured on this unit and why the rest is left out: `research/2026-10-25-hw-info-inventory.md` (the "#n" numbers in the notes refer to its table), raw outputs in `experiments/2026-10-25-hw-inventory/`. The "Not available" table is checked live where a file can tell (e.g. `/sys/devices/system/edac` absent) and says so if that ever changes.
+>
+> **Refresh.** Page load, then every 60 s; the 5 s live poll does not touch this section.
+:end

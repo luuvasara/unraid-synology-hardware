@@ -1,0 +1,58 @@
+Menu="SynologyHW:4"
+Title="History"
+Tag="line-chart"
+---
+<?php
+/* History tab (2026.10.25j): the graphs, split by unit on one time axis. */
+?>
+<?php require_once "$docroot/plugins/synology-hardware/include/synohw-page.php"; $P = synohw_page(); $S = $P['s']; $live = $P['live']; $cfg = $P['cfg']; $plugin = "synology-hardware"; synohw_page_head(); ?>
+
+<div class="title"><span class="left"><i class="title fa fa-line-chart"></i>_(History graphs)_</span><span class="grey-text">From the daemon&#39;s RAM history, one sample every 30 s.</span></div>
+
+<div id="synohw-graphs" class="synohw-graphs">
+<div class="synohw-graph-bar">
+  <fieldset class="synohw-range"><legend>Time range</legend>
+    <label><input type="radio" name="synohw-range" value="3600"> 1 h</label>
+    <label><input type="radio" name="synohw-range" value="21600"> 6 h</label>
+    <label><input type="radio" name="synohw-range" value="86400" checked> 24 h</label>
+  </fieldset>
+  <label><input type="checkbox" id="synohw-cores"> CPU per core</label>
+  <label><input type="checkbox" id="synohw-cputhr"> Scale up to the CPU steps (65 / 85 &deg;C)</label>
+</div>
+<p id="synohw-graphs-msg" class="grey-text" role="status"><noscript>The graphs need JavaScript; the tables below show the same values.</noscript></p>
+<div id="synohw-graphs-plots" hidden>
+<section class="synohw-hist-section" aria-labelledby="synohw-hist-ds-h">
+<h3 class="synohw-sub" id="synohw-hist-ds-h"><?=synohw_badge('ds', $S, true)?></h3>
+<h3 class="synohw-chart-title" id="synohw-chart-temp-h">Temperatures (&deg;C): CPU and this unit's disks, with the running fan table's steps as dashed lines</h3>
+<div id="synohw-chart-temp" class="synohw-chart" tabindex="0" role="img" aria-labelledby="synohw-chart-temp-h" aria-describedby="synohw-graphs-keys"></div>
+<h3 class="synohw-chart-title" id="synohw-chart-duty-h">Fan duty sent (%), same time axis: steps at 20 / 40 / 70 / 99 %</h3>
+<div id="synohw-chart-duty" class="synohw-chart" tabindex="0" role="img" aria-labelledby="synohw-chart-duty-h" aria-describedby="synohw-graphs-keys"></div>
+<div id="synohw-legend-ds" class="synohw-legend-box TableContainer--no-min-width"></div>
+</section>
+<section class="synohw-hist-section synohw-hist-section-dx" aria-labelledby="synohw-hist-dx-h">
+<h3 class="synohw-sub" id="synohw-hist-dx-h"><?=synohw_badge('dx', $S, true)?></h3>
+<h3 class="synohw-chart-title" id="synohw-chart-dxtemp-h">Disk temperatures (&deg;C), with the DX1215 table's rows as dashed lines; red band = fan alarm</h3>
+<div id="synohw-chart-dxtemp" class="synohw-chart" tabindex="0" role="img" aria-labelledby="synohw-chart-dxtemp-h" aria-describedby="synohw-graphs-keys"></div>
+<p id="synohw-chart-dxtemp-msg" class="grey-text" hidden>No disk of the expansion unit in this range (the unit of each disk is decided from sysfs).</p>
+<h3 class="synohw-chart-title" id="synohw-chart-dx-h">Fan level (stop / low / middle / full), same time axis; red band = fan alarm</h3>
+<div id="synohw-chart-dx" class="synohw-chart" tabindex="0" role="img" aria-labelledby="synohw-chart-dx-h" aria-describedby="synohw-graphs-keys"></div>
+<p id="synohw-chart-dx-msg" class="grey-text" hidden>Fan level: not recorded in this range (needs the expansion plugin's synology_dx module and daemon 2026.10.25h or later).</p>
+<div id="synohw-legend-dx" class="synohw-legend-box TableContainer--no-min-width"></div>
+</section>
+<p id="synohw-graphs-keys" class="grey-text whitespace-normal">Hover a graph (or focus it with Tab and use Left / Right, Shift for 10 samples, Home / End) for the exact values at that time; they also appear in the table below. A gap = no sample (daemon stopped, or a disk in standby: it is never woken to read it). Shaded = a fan sweep held the fan. The same numbers as text: the Temperatures tables on the unit tabs. <span id="synohw-legend-at"></span></p>
+</div>
+</div>
+
+:synohw_graphs_plug:
+> **DX1215 level** (2026.10.25h): the level the module reads back after each DX evaluation (`@dx`), dashed: the level the daemon wanted (`@dxwant`), with the reason in the legend at the cursor; a red band where a fan alarm bit was set (`@dxal`). It is a separate chart because it is a level, not a percentage: no RPM or duty exists for the DX1215 fans (a 2-bit CPLD code).
+>
+> **Where the data comes from.** `/var/run/synology-hardware/history`, one line per evaluation (every 30 s, `CPU_PERIOD`), last 3000 lines (about 25 h), RAM only: it starts empty at every boot and is never written to the flash. Since 2026.10.25f each line also records the table mode, why the table chose its duty, the table duty itself, the sweep step during a fan sweep and every CPU sensor; older lines show "reason not recorded".
+>
+> **Which box a disk is in** is read from sysfs, never from the `sdX` name (which changes between boots): `/sys/block/<dev>/device` resolves through the PCI controller and the `ataN` port. Behind the Marvell 88SE9235 (`1b4b:9235`) or behind a port multiplier (`ataN/linkN.0` exists; the DX1215 uses Marvell 88SM9705, `1b4b:9705`) = **DX1215**; any other SATA controller = **DS2415+ internal**. The Source column says which path was found.
+>
+> **The dashed lines** are the steps of the table the daemon runs (`scemd.xml:17-29` LOW, `:3-15` HIGH; see the Fan table help): disk steps raise the fan to 40 / 70 / 99 %, disk alert in red; the CPU steps (65 / 85 &deg;C) are above the usual range, tick "Scale up to the CPU steps" to see them.
+>
+> **Fan duty** is what was sent to the MCU (`V<nn>`); the fan speed itself cannot be read (no tach). "Table duty" is what the table chose; the two differ only while a fan sweep holds the fan.
+>
+> **Library.** uPlot 1.6.32 (MIT, github.com/leeoniya/uPlot), shipped inside the plugin: the page loads nothing from the internet.
+:end

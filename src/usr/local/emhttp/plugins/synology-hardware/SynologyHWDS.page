@@ -1,0 +1,283 @@
+Menu="SynologyHW:2"
+Title="DS2415+"
+Tag="server"
+---
+<?php
+/* DS2415+ tab (2026.10.25j): its fan, temperatures, settings form, MCU, ports and MACs, fan sweep. */
+?>
+<?php require_once "$docroot/plugins/synology-hardware/include/synohw-page.php"; $P = synohw_page(); $S = $P['s']; $live = $P['live']; $cfg = $P['cfg']; $plugin = "synology-hardware"; synohw_page_head(); ?>
+
+<div class="title"><span class="left"><i class="title fa fa-tachometer"></i>_(Fan control)_ <?=synohw_badge('ds', $S, true)?></span><span class="synohw-live-state grey-text"><noscript>Live updates need JavaScript; values are from page load.</noscript></span></div>
+
+<?=synohw_live('ds_now')?>
+
+<h3 class="synohw-sub">What each fan table would do at the current temperatures</h3>
+<?=synohw_live('fan')?>
+
+:synohw_fan_live_plug:
+> Live, read-only. "Now" comes from the same sources the daemon uses (disks.ini + devs.ini, real disks only; coretemp). The LOW and HIGH columns apply the table rows above to the current temperatures without hysteresis, so they show where each table would settle; "Daemon decision" is what the running daemon actually chose, including hysteresis and the 70 % floor. "away" = how many °C are left before that threshold.
+:end
+
+<div class="title"><span class="left"><i class="title fa fa-thermometer-half"></i>_(Temperatures: CPU and disks)_ <?=synohw_badge('ds', $S, true)?></span></div>
+
+<?=synohw_live('temps_ds')?>
+
+:synohw_temps_plug:
+> Min and max come from `/var/run/synology-hardware/history`, a RAM file the daemon appends one line to per evaluation (every 30 s: time, CPU, fan duty, every real disk's temperature, `*` for standby or `?` for a spinning disk without a reading; an unassigned disk is listed by its device name, e.g. `sdd`), trimmed to the last 3000 lines (about 25 h). It is never written to the flash and starts empty at every boot, so the window can be shorter than 24 h. A disk asleep is counted as "standby" and a `?` as "no reading", neither as a temperature.
+:end
+
+<div class="title"><span class="left"><i class="title fa fa-lightbulb-o"></i>_(Bay LEDs)_ <?=synohw_badge('ds', $S, true)?></span></div>
+
+<?=synohw_live('leds_ds')?>
+
+:synohw_leds_ds_plug:
+> **What is shown.** Per bay: the disk Unraid reports there, the LED state the synology_dx driver has set (green = the controller's own presence/activity once the bay LEDs are on; orange = fault) and this plugin's health verdict for the disk. It is what the driver set, not a reading of the LED itself. Bay numbers confirmed at the box by blink count (2026-10-26).
+>
+> **Who sets what.** The Synology Expansion Unit Driver plugin switches the bay LEDs on at boot (default) and has the on/off settings (Utilities, Synology Expansion Unit Driver, Bay LED settings). This plugin's daemon sets orange from disk health every `LED_PERIOD` s (60), with `LED_HEALTH` below: a disk gets orange when Unraid has disabled it or marks it invalid/wrong (disks.ini `DISK_DSBL`, `DISK_DSBL_NEW`, `DISK_INVALID`, `DISK_WRONG`, or a red status colour), or when Unraid's own SMART record for it (`/var/local/emhttp/smart/<name>`) has an attribute at or below its threshold now (`FAILING_NOW`) or an overall-health FAILED. Read errors and attributes that failed only in the past do not set orange. No disk is queried or woken for this. A bay without a fault, or without a disk, is cleared; stopping the daemon clears the orange it set.
+>
+> **DS2415+ orange.** The 88SE9215 fault bits light orange only while Avoton PCH GPIO 49 is high; the driver sets it with the bay LEDs, as DSM's synobios does (`research/2026-10-26-ds-orange-led.md`). The line above says whether it is high.
+:end
+
+<div class="title"><span class="left"><i class="title fa fa-sliders"></i>_(Settings)_ <?=synohw_badge('ds', $S, true)?></span><span class="grey-text">Click a label, or the Help button, for what it does, the exact bytes, the source and the risk.</span></div>
+
+<form markdown="1" name="synohw_ds" method="POST" action="/update.php" target="progressFrame">
+<input type="hidden" name="#file" value="<?=$plugin?>/<?=$plugin?>.cfg">
+<input type="hidden" name="#command" value="/plugins/<?=$plugin?>/scripts/synohw-apply">
+
+<h3 class="synohw-sub">Fan</h3>
+
+_(Fan table)_ (FAN_MODE):
+: <select name="FAN_MODE" aria-label="Fan table (FAN_MODE)">
+  <?=mk_option($cfg['FAN_MODE'], "LOW", "LOW: DUAL_MODE_LOW (quieter, plugin default)")?>
+  <?=mk_option($cfg['FAN_MODE'], "HIGH", "HIGH: DUAL_MODE_HIGH (cooler, louder)")?>
+  </select>
+
+:synohw_fan_mode_plug:
+> **What it does.** Chooses which of the two fan tables that Synology ships for the DS2415+ the daemon follows. Both are in DSM's own `scemd.xml`, captured from this unit's DSM 7.1.1 (`capture/2026-10-23/bin/usr/syno/etc.defaults/scemd.xml`). The plugin copies them, it does not invent a curve. The values in °C are temperatures at or above which a row applies:
+>
+> - **LOW** (`DUAL_MODE_LOW`, scemd.xml:17-29): disk from 0 / 46 / 50 / 54 °C &rarr; 20 / 40 / 70 / 99 %; disk ALERT 58 °C (LEDs, fan stays 99 %); disk SHUTDOWN band 61 °C.
+> - **HIGH** (`DUAL_MODE_HIGH`, scemd.xml:3-15): disk from 0 / 41 / 45 / 49 °C &rarr; 20 / 40 / 70 / 99 %; disk ALERT 53 °C; disk SHUTDOWN band 61 °C.
+> - **CPU, same in both:** from 0 / 65 / 85 °C &rarr; 20 / 70 / 99 %; CPU ALERT 85 °C; CPU SHUTDOWN band 95 °C.
+>
+> **How the duty is chosen.** Disk input = the hottest real disk in Unraid's `/var/local/emhttp/disks.ini` (array and pool slots) and `devs.ini` (unassigned devices). Not disks, so skipped: empty slots (`status` starting with `DISK_NP`, or `device=""`, as the webGui does: `nchan/device_list:185-186`), the flash, and every USB device (the DOM, a stick: decided from `/sys/block/<dev>/device`, which leads through `/usb` for them; `sdX` names change between boots so they are never used to decide). A disk asleep shows `temp="*"` with `spundown="1"` and counts as cool (step 0), so no disk is ever woken. A disk that shows `temp="*"` with `spundown="0"` is spinning without a reading: it is **not** counted as cool but as unreadable, so the 70 % floor applies, and it is not probed either.
+>
+> **Why `*` + spundown 0 is "unreadable".** Measured on this DS2415+ on 2026-10-25 01:52, array unassigned: disks.ini held only the 24 empty slots (`device=""` `status="DISK_NP"` `temp="*"`) and the flash; the two HDDs were in devs.ini (`sdd` `spundown="0"` `temp="28"`, `sdc` `spundown="0"` `temp="31"`) next to the USB DOM `sdb` with `temp="*"`. Version 2026.10.25b read only disks.ini, took all those `*` for sleeping disks and held the fan at 20 % whatever the HDDs did. A spinning disk without a temperature could be hot, so the plugin assumes the worse case.
+>
+> CPU input = the hottest `coretemp` sensor in `/sys/class/hwmon`. Duty = the higher of the two results. One input unreadable: at least 70 % (the plugin's "MIDDLE" floor). Both unreadable: 99 % ("FULL"). The daemon steps down only when the temperature is 2 °C below the row it is on (every scemd row has `threshold="2"`). It reads the CPU every 30 s (scemd `period="30"`) and disks.ini and devs.ini every 60 s (scemd uses `period="300"` for disks; the files cost nothing to read).
+>
+> **Bytes sent.** `V<nn>` (fan duty in %, e.g. `V20`, `V99`) whenever the result changes and again every 300 s in case the MCU was reset; `W20` once at start (PWM 20 Hz: every row says `NN%20hz`). In the ALERT band `;` (status LED orange blinking) and `LA1` (alert LED on); when it clears `8` (green) and `LA3`. All measured under DSM on this unit (`research/2026-10-23-microp-commands.md`).
+>
+> **Default LOW, and why.** It is the quieter of Synology's two tables for this model. The plugin README and design notes call LOW "the DSM default"; nothing captured from DSM proves which table DSM picks out of the box (`synoinfo.conf:180` only says `support_fan_adjust_dual_mode="yes"`), so treat that as not verified.
+>
+> **Not measured.** Which disk temperature DSM itself feeds into the table (hottest disk is the plugin's choice) and which CPU sensor scemd reads. The fan speed is not read back: there is no tach reading, only the duty that was sent.
+>
+> **Risk.** LOW lets disks reach 54 °C before the fan is at 99 %; HIGH reaches 99 % at 49 °C and is louder. Neither can stop the fan: the lowest row is 20 % and the allow-list refuses `V` below 10. Changing it restarts the daemon (Apply): a few hundred milliseconds without keepalive, startup bytes sent again. "What each table would do" under Fan control on this tab shows what each table would choose at the current temperatures.
+:end
+
+_(DS2415+ fan mode)_ (DS_MODE):
+: <select name="DS_MODE" aria-label="DS2415+ fan mode (DS_MODE)">
+  <?=mk_option($cfg['DS_MODE'], "AUTO", "AUTO: follow the fan table (plugin default)")?>
+  <?=mk_option($cfg['DS_MODE'], "MANUAL", "MANUAL: fixed duty, safety rules still raise it")?>
+  </select>
+
+:synohw_ds_mode_plug:
+> **AUTO** (default): the daemon follows the fan table chosen above, as DSM does. **MANUAL**: it sends the duty set below whatever the temperatures, **except** that the plugin's safety rules still raise it (never lower it): a temperature in the ALERT band (disk 58 °C LOW / 53 °C HIGH, CPU 85 °C) gives 99 %, one unreadable source or a spinning disk without a reading gives at least 70 % (`UNREADABLE_FLOOR`), no temperature at all gives 99 % (`NO_DATA_DUTY`). The SHUTDOWN band acts as in AUTO (see "Power off in the SHUTDOWN band").
+>
+> **Risk.** A low MANUAL duty lets the disks run warmer than either Synology table would allow until the ALERT band; the table rows in between (40 / 70 / 99 % from 46 / 50 / 54 °C) are not applied. The Overview card and Fan control on this tab say which rule is in force.
+:end
+
+_(DS2415+ lowest duty in AUTO, %)_ (DS_FLOOR):
+: <input type="number" name="DS_FLOOR" aria-label="DS2415+ lowest duty in AUTO, % (DS_FLOOR)" min="10" max="20" value="<?=synohw_h($cfg['DS_FLOOR'])?>">
+
+:synohw_ds_floor_plug:
+> **What it does.** In AUTO, replaces the duty of the table's lowest row (both tables, disk and CPU: 20 % in `scemd.xml`) by this value, 10..20. Every other row, the hysteresis and the floors stay as they are. Default 20 = what DSM does.
+>
+> **Measured on this unit** (fan sweep of 2026-10-25, idle; the summary was handed over by the main session, the sweep files are on the NAS flash and not in this repository): duty 10 % settled at CPU 37-38 °C / disks 33 °C; 20 % at 33 / 31 °C; 99 % at 27 / 28 °C. So 10 % costs about 4-5 °C on the CPU and 2 °C on the disks at idle compared with DSM's 20 %.
+>
+> **Caveats.** The fan speed cannot be read (no tach): whether the fan really turns slower at 10-19 % than at 20 % is inferred from the temperatures only, and a duty the fan cannot start at could stall it unnoticed. Load (parity check, transcoding) raises the temperatures above those idle numbers; the table rows still raise the fan when they are reached.
+:end
+
+_(DS2415+ manual duty, %)_ (DS_DUTY):
+: <input type="number" name="DS_DUTY" aria-label="DS2415+ manual duty, % (DS_DUTY)" min="10" max="99" value="<?=synohw_h($cfg['DS_DUTY'])?>">
+
+:synohw_ds_duty_plug:
+> Used only with DS2415+ fan mode MANUAL: the duty sent (`V<nn>`), 10..99. The allow-list refuses anything below 10. Same measured numbers and caveats as the lowest-duty setting above.
+:end
+
+<h3 class="synohw-sub">Front-panel MCU (ttyS1)</h3>
+
+_(Keepalive interval, seconds)_ (KEEPALIVE_SEC):
+: <input type="number" name="KEEPALIVE_SEC" aria-label="Keepalive interval, seconds (KEEPALIVE_SEC)" min="2" max="60" value="<?=synohw_h($cfg['KEEPALIVE_SEC'])?>">
+
+:synohw_keepalive_plug:
+> **What it does.** How often the daemon sends `u` (DSM name `ENABLE_FAN_CHECKER`) to the MCU on `/dev/ttyS1`.
+>
+> **Source.** Measured: under DSM, `scemd` writes `u` about every 10 s for as long as DSM runs, and DSM's shutdown service `SynoDisableFanCheck` disarms it (presumably with `t`) (`research/2026-10-23-microp-commands.md`, "Observed traffic"). The plugin copies that: `u` at start and every N s, `t` on every stop.
+>
+> **Default 10 s** = what DSM does. Allowed 2..60; anything else is refused by the cfg parser and logged.
+>
+> **Not measured.** What the MCU does when `u` stops coming (hypothesis: fan-fail beeping or full fan speed). Intervals above 10 s were never tested on the unit, so the MCU's timeout is unknown. Shorter is harmless (more bytes on a 9600 baud line that is otherwise idle).
+>
+> **Risk.** Raising it could let the MCU's watchdog fire, if it has one. Leave it at 10 unless you are measuring that.
+:end
+
+_(Beep on start)_ (BEEP_ON_START):
+: <select name="BEEP_ON_START" aria-label="Beep on start (BEEP_ON_START)">
+  <?=mk_option($cfg['BEEP_ON_START'], "no", "No")?>
+  <?=mk_option($cfg['BEEP_ON_START'], "yes", "Yes")?>
+  </select>
+
+:synohw_beep_plug:
+> **What it does.** Sends `2` (DSM name `BUZZER_OUT_SHORT`, measured) once, right after the startup bytes, so you can hear that the daemon took over the MCU.
+>
+> **Default No**: every Apply restarts the daemon, and a beep on each one is noise. The long beep `3` is refused (see "Why only these").
+>
+> **Risk.** None known.
+:end
+
+_(Power on after AC loss)_ (AC_RECOVERY):
+: <select name="AC_RECOVERY" aria-label="Power on after AC loss (AC_RECOVERY)">
+  <?=mk_option($cfg['AC_RECOVERY'], "keep", "Keep (send nothing)")?>
+  <?=mk_option($cfg['AC_RECOVERY'], "on", "On (send q)")?>
+  <?=mk_option($cfg['AC_RECOVERY'], "off", "Off (send p)")?>
+  </select>
+
+:synohw_ac_plug:
+> **What it does.** Keep: nothing is sent. On: `q` (`ENABLE_AC_RECOVERY`), Off: `p` (`DISABLE_AC_RECOVERY`), sent at every daemon start. The bytes are measured under DSM on this unit.
+>
+> **Default Keep**, so the plugin does not change what DSM last configured. When the bytes were measured, DSM had AC recovery disabled on this unit (`research/2026-10-23-microp-commands.md`, last line).
+>
+> **Not measured.** Whether the MCU keeps the setting through a power loss, i.e. whether the unit really powers on again: the plug was never pulled to test it.
+>
+> **Risk.** Low. On: the box starts by itself after a power cut (also in the middle of a UPS-triggered shutdown sequence if power returns).
+:end
+
+_(Wake-on-LAN in the MCU)_ (WOL):
+: <select name="WOL" aria-label="Wake-on-LAN in the MCU (WOL)">
+  <?=mk_option($cfg['WOL'], "keep", "Keep (send nothing)")?>
+  <?=mk_option($cfg['WOL'], "on", "On (send l)")?>
+  <?=mk_option($cfg['WOL'], "off", "Off (send k)")?>
+  </select>
+
+:synohw_wol_plug:
+> **What it does.** Keep: nothing. On: `l`, Off: `k` (DSM's tool names them `ENALBE_WAKE_ON_LAN_FUNCTION` / `DISABLE_WAKE_ON_LAN_FUNCTION`, measured), sent at every daemon start.
+>
+> **Default Keep**: DSM had it disabled when measured.
+>
+> **Not measured.** Whether a magic packet wakes the unit. The plugin does not set the NIC's own wake-on-LAN (`ethtool -s ethN wol g`); both may be needed.
+>
+> **Risk.** None known.
+:end
+
+_(Power off in the SHUTDOWN band)_ (SHUTDOWN_ACTION):
+: <select name="SHUTDOWN_ACTION" aria-label="Power off in the SHUTDOWN band (SHUTDOWN_ACTION)">
+  <?=mk_option($cfg['SHUTDOWN_ACTION'], "no", "No (log only)")?>
+  <?=mk_option($cfg['SHUTDOWN_ACTION'], "yes", "Yes (run /sbin/poweroff)")?>
+  </select>
+
+:synohw_shutdown_plug:
+> **What it does.** scemd.xml has `action="SHUTDOWN"` rows: disk 61 °C, CPU 95 °C (scemd.xml:9, 14, 23, 28). No: the daemon logs "SHUTDOWN band reached" to syslog at every evaluation while it lasts. Yes: it marks a system shutdown and runs `/sbin/poweroff`, Unraid's normal clean shutdown: `rc.6` runs `K05synology-hardware` (fan 99 %, `t`, `5`, `7`) and then `rc.local_shutdown` stops the array (`rc.local_shutdown:28-30`).
+>
+> **Default No.** Unraid already warns about disk temperatures itself (Settings > Disk Settings; defaults 45 °C warning, 55 °C critical, `default.cfg:26-27`), and an unattended poweroff of a file server is a big step for a plugin to take.
+>
+> **Risk with Yes.** One reading at or above the band powers the server off (no repeat count, no delay), so a bogus sensor value would do it too. Never triggered on the unit: untested on hardware.
+:end
+
+_(Debug log)_ (DEBUG):
+: <select name="DEBUG" aria-label="Debug log (DEBUG)">
+  <?=mk_option($cfg['DEBUG'], "no", "No")?>
+  <?=mk_option($cfg['DEBUG'], "yes", "Yes (every MCU byte and every command, noisy)")?>
+  </select>
+
+:synohw_debug_plug:
+> **What it does.** No: each byte value the MCU sends is logged once ("first seen"), then counts every 600 s (`MCU_LOG_SEC`); commands sent are not logged. Yes: every byte read from ttyS1 (`MCU byte 0x..`) and every command sent (`sent 'u'`) goes to syslog.
+>
+> **Why the default is No.** The MCU streams "K3" about 4 times a second from power-on, with or without commands (measured 2026-10-24, recorded in `scripts/synohw-daemon`). With Yes that is about 8 syslog lines per second, roughly 700,000 a day, plus one per command. Unraid keeps `/var/log` in RAM.
+>
+> **Use it for** measuring an unknown event, e.g. which byte the power button sends (not known yet), then switch back.
+>
+> **Bytes sent.** None; logging only.
+:end
+
+<h3 class="synohw-sub">Network ports</h3>
+
+_(Real MACs from the DOM)_ (MACFIX):
+: <select name="MACFIX" aria-label="Real MACs from the DOM (MACFIX)">
+  <?=mk_option($cfg['MACFIX'], "yes", "Yes")?>
+  <?=mk_option($cfg['MACFIX'], "no", "No")?>
+  </select>
+
+:synohw_macfix_plug:
+> **Why it exists.** The four Intel i354 ports (driver `igb`) carry Intel's placeholder MAC `00:a0:c9:00:00:00` to `:03` in their NVM; DSM sets the real MACs at boot from the `vender` file on the internal DOM (measured, `docs/UPSTREAM-PR-NOTES.md` M1). Without this, every DS2415+ running another OS has the same four MACs, and DHCP sees a different machine.
+>
+> **What Yes does.** Reads `vender` from the DOM (USB `f400:f400`, partition 2) read-only: `blockdev --setro`, `mount -o ro,noexec,nosuid,nodev`, decode, `umount`, cached for this boot in `/var/run/synology-hardware/macs`. Layout: 4 x (6-byte MAC + 1 check byte), serial at offset 32 (measured, M2). MAC n goes to the n-th PCI network function in PCI address order (assumed to be DSM's eth0..3 order, M4: not checked which RJ45 is which). It then writes `/boot/config/udev/70-synology-hardware-mac.rules` (only when the content differs) and a copy in `/etc/udev/rules.d`. At every boot Unraid copies `/boot/config/udev/*.rules` into `/etc/udev/rules.d` before udevd starts (`rc.S.cont:33-40`, udev `:51-55`), long before the network (`rc.inet1` from `rc.M:65-66`), so each port gets its real MAC as it appears. Nothing is sent to the MCU.
+>
+> **First Apply with placeholders still active** (or first install): the MACs are applied live once, detached: `rc.inet1 br0_stop`, `ip link set dev ethN address ...` per port, `rc.inet1 br0_start`. A few seconds without network and a new DHCP lease for the real MAC (possibly a new IP). Skipped while Docker or VMs run (deleting br0 would cut them off); then the next boot does it.
+>
+> **No** deletes both rule files; the ports go back to the placeholders at the next boot.
+>
+> **Default Yes.** **Risk:** the network drop above, once; a DHCP reservation keyed on the placeholder no longer matches.
+:end
+
+_(Orange bay LED from disk health)_ (LED_HEALTH):
+: <select name="LED_HEALTH" aria-label="Orange bay LED from disk health (LED_HEALTH)">
+  <?=mk_option($cfg['LED_HEALTH'], "yes", "Yes (default)")?>
+  <?=mk_option($cfg['LED_HEALTH'], "no", "No")?>
+  </select>
+
+:synohw_led_health_plug:
+> **Yes** (default): the daemon sets the orange LED of a bay whose disk Unraid has disabled (or marks invalid/wrong, or shows red) or whose SMART record has an attribute failing now, and clears it otherwise; DS2415+ and DX1215 alike (see Bay LEDs above for the exact rules). **No**: the daemon clears the orange it set and sets none. Green and on/off are not set here but in the Synology Expansion Unit Driver plugin.
+:end
+
+&nbsp;
+: <span class="inline-block">
+    <input type="submit" value="_(Apply)_" disabled>
+    <input type="button" value="_(Done)_" onclick="done()">
+  </span>
+
+:synohw_apply_plug:
+> Apply saves the form into `/boot/config/plugins/synology-hardware/synology-hardware.cfg` (Unraid's `/update.php`, which keeps keys that are not in this form, `update.php:82`) and runs `scripts/synohw-apply`: `rc.synology-hardware macfix` (udev rule per MACFIX), `rc.synology-hardware restart` (stop sends `V99` `t`; start sends `u 4 8 W20` [`2`] [`q`/`p`] [`l`/`k`] `O`), then status. The cfg is parsed as KEY=value lines and never executed; only known keys with valid values are used, everything else is logged as "cfg: ignoring".
+:end
+</form>
+
+<div class="title"><span class="left"><i class="title fa fa-exchange"></i>_(Front-panel MCU link)_ <?=synohw_badge('ds', $S, true)?></span></div>
+
+<?=synohw_live('mcu_link')?>
+
+<h3 class="synohw-sub">Bytes from the MCU</h3>
+<?=synohw_live('mcu')?>
+
+<div class="title"><span class="left"><i class="title fa fa-plug"></i>_(Network ports and real MACs)_ <?=synohw_badge('ds', $S, true)?></span></div>
+
+<?=synohw_live('net')?>
+
+:synohw_net_plug:
+> Live, read-only, from `/sys/class/net` (address, `addr_assign_type`, master, operstate), `/proc/net/bonding/*` ("Permanent HW addr" = what the NIC's NVM holds, shown for bond slaves) and the per-boot cache `/var/run/synology-hardware/macs`. `addr_assign_type`: 0 = from the NVM, 3 = set by software (our udev rule or the live apply). This page never mounts the DOM.
+:end
+
+<div class="title"><span class="left"><i class="title fa fa-refresh"></i>_(Fan sweep)_ <?=synohw_badge('ds', $S, true)?></span><span class="grey-text">Read-only; started on the command line.</span></div>
+
+<div id="synohw-sweep-box" class="synohw-graphs synohw-sweep-box"><?=synohw_live('sweep')?>
+<p id="synohw-sweep-msg" class="grey-text" hidden></p>
+<div id="synohw-sweep-graphs" hidden>
+<h3 class="synohw-chart-title" id="synohw-sweep-temp-h">Sweep: temperatures (&deg;C); a vertical line at each step start, the sweep's abort limits in red</h3>
+<div id="synohw-sweep-temp" class="synohw-chart" tabindex="0" role="img" aria-labelledby="synohw-sweep-temp-h"></div>
+<h3 class="synohw-chart-title">Sweep: fan duty sent (%)</h3>
+<div id="synohw-sweep-duty" class="synohw-chart" tabindex="0" role="img" aria-label="Fan duty sent during the sweep, per step"></div>
+<ul id="synohw-sweep-legend" class="synohw-sweep-legend"></ul>
+<p class="grey-text whitespace-normal">From <code>/var/run/synology-hardware/sweep.csv</code> (one row every 30 s). At the cursor: <span id="synohw-sweep-at">hover or focus a sweep graph</span></p>
+</div></div>
+
+:synohw_sweep_plug:
+> **What it does.** A characterisation run to find out experimentally how low the fan can go. The daemon holds the fan at one fixed duty after another (default plan: 20 baseline, 15, 12, 10, 20, 40, 70, 99 %), records every 30 s the CPU temperature (max and each core), every real disk's temperature (keyed by its serial/id, not by `sdX`) and how many MCU bytes of each value arrived, and writes a per-step summary at the end: start, end, min, max and slope in &deg;C per 10 min for the CPU and every disk, and whether the temperatures had settled. The fan speed itself cannot be read (no tach reading), so "where it fluctuates, where it really rises or falls" is judged from the temperatures and from the MCU byte counts, not from RPM.
+>
+> **Start and stop are on the command line only** (this panel is read-only): `/etc/rc.d/rc.synology-hardware sweep start [duty ...]`, `sweep status`, `sweep stop`. Duties are integers 10 to 99, at most 24 steps; nothing below 10 is ever accepted (the command allow-list refuses `V` below 10 as well). The running daemon does the sweep because it owns the serial port.
+>
+> **Timing.** Each step is held at least 600 s (`SWEEP_MIN_HOLD`), moves on early once settled (no temperature moved more than 0.5 &deg;C in the last 600 s: `SWEEP_SETTLE_WINDOW`, `SWEEP_SETTLE_DELTA`) and at most 1800 s (`SWEEP_MAX_HOLD`). Temperatures are whole degrees, so "settled" means unchanged. The sweep re-sends its duty every `FAN_REASSERT` seconds like the table duty.
+>
+> **Safety: any of these ends the sweep at once, puts the table duty back, logs the reason to syslog and shows ABORTED here.** A disk at 46 &deg;C or more, or the CPU at 65 &deg;C or more (the first raise thresholds of the LOW table: 40 % and 70 %, `scemd.xml:17-29`); any temperature that cannot be read (a disk asleep or without a reading counts); **any MCU byte other than `3` (0x33) and `K` (0x4b)**, the only two the MCU has been measured to send (about 4 each per second), because anything else could be a fan-fail alarm; a failed write to the serial port. Stopping or restarting the daemon, or `sweep stop`, ends it too. A sweep never survives a daemon restart or a reboot: its state is only in `/var/run/synology-hardware` (RAM).
+>
+> **Results.** `/var/run/synology-hardware/sweep.csv` (columns: epoch, step, duty, cpu_max, core:..., disk:&lt;id&gt;..., mcu_33, mcu_4b, mcu_other) and `sweep-summary.txt` while it runs and until reboot. At the end (done, aborted or stopped) both are copied once to `/boot/config/plugins/synology-hardware/sweep-<date>-<time>.csv` and `.txt`: one small flash write, nothing else is written to the flash during a sweep.
+>
+> **Sources and limits.** The 46 &deg;C and 65 &deg;C limits and the duty table are Synology's own (`capture/2026-10-23/bin/usr/syno/etc.defaults/scemd.xml`, copied in the fan help above); the 10 % floor, the 0.5 &deg;C settle rule, the hold times and the 0x33/0x4b byte rule are this plugin's choices. The MCU's K/3 stream and the `V<nn>` command are measured (`research/2026-10-23-microp-commands.md`). Not known: what the MCU does with a duty below its lowest DSM step (20 %); the sweep is the experiment that probes it, and a duty the fan cannot spin at may stall it. Temperatures react slowly (minutes), so a step shorter than the minimum hold shows little.
+:end

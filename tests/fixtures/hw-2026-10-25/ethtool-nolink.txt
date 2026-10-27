@@ -1,0 +1,8 @@
+	Supported ports: [ TP ]
+	Speed: Unknown!
+	Duplex: Unknown! (255)
+	Auto-negotiation: on
+	Supports Wake-on: pumbg
+	Wake-on: g
+	Link detected: no
+driver: igb

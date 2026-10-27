@@ -1,0 +1,9 @@
+#!/bin/bash
+# synohw-apply - run by the settings page through /update.php (#command must live under the webGui
+# docroot, update.php:113-118) after the cfg was saved: update/remove the udev rule, restart the daemon.
+# Written: 2026-10-25.
+RC=${SYNOHW_RC_PATH:-/etc/rc.d/rc.synology-hardware}
+"$RC" macfix
+"$RC" restart
+"$RC" status
+exit 0
