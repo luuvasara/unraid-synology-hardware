@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Plugin>
+  <Name>Synology Hardware</Name>
+  <PluginURL>https://raw.githubusercontent.com/luuvasara/unraid-synology-hardware/main/synology-hardware.plg</PluginURL>
+  <Support>https://github.com/luuvasara/unraid-synology-hardware/issues</Support>
+  <Project>https://github.com/luuvasara/unraid-synology-hardware</Project>
+  <Icon>https://raw.githubusercontent.com/luuvasara/unraid-synology-hardware/main/icon.png</Icon>
+  <Category>Tools:System</Category>
+  <MinVer>7.0.0</MinVer>
+  <License>GPL-2.0</License>
+  <ReadMe>https://github.com/luuvasara/unraid-synology-hardware#readme</ReadMe>
+  <ExtraSearchTerms>synology ds2415 dx1215 fan led mac temperature</ExtraSearchTerms>
+  <Overview>Runs a Synology DS2415+ (and a DX1215 expansion unit) under Unraid.
+
+- Fans of both units from DSM's own fan tables, by the hottest disk and the CPU. Sleeping disks are never woken, and the fan is never set below 10 %.
+- Front-panel LEDs, and orange bay LEDs from disk health.
+- The real MAC addresses, read from the DOM and applied at boot.
+- Settings, Synology Hardware: a live drawing of both units, bay map, temperatures, history graphs, a hardware inventory and bay badges on the Main page.
+- A Report tab that anonymises what your unit looks like, for support of other models.
+
+For a DX1215 and the bay LEDs, install the companion plugin, the Synology Expansion Unit Driver.
+
+Experimental. Only the DS2415+ and DX1215 are supported.</Overview>
+</Plugin>

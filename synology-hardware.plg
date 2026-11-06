@@ -1,12 +1,12 @@
 <?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
   <!ENTITY name    "synology-hardware">
-  <!ENTITY version "2026.10.26g">
+  <!ENTITY version "2026.11.06a">
   <!ENTITY gitURL  "https://raw.githubusercontent.com/luuvasara/unraid-synology-hardware/main">
   <!ENTITY pluginURL "&gitURL;/synology-hardware.plg">
   <!ENTITY pkg     "synology-hardware-&version;-x86_64-1.txz">
   <!ENTITY pkgURL  "&gitURL;/packages/&pkg;">
-  <!ENTITY md5     "b99e435018385b65370b6b31b1d35f11">
+  <!ENTITY md5     "361547b9b3bd8fb3e531ffb8b08b74b2">
 ]>
 <!-- Written: 2026-10-24. Hardware support for the Synology DS2415+ (front-panel MCU, fan, LEDs, real MACs).
      Install: Plugins, Install Plugin, https://raw.githubusercontent.com/luuvasara/unraid-synology-hardware/main/synology-hardware.plg
@@ -16,6 +16,10 @@
 <PLUGIN name="&name;" author="synology-hardware project" version="&version;" min="7.0.0" launch="Settings/SynologyHW" icon="synology-hardware.png" pluginURL="&pluginURL;">
 
 <CHANGES>
+###2026.11.06a
+- New About tab: the installed version and the latest changes, with links, the author and the licence. Install and update now print the latest changes in a box. The old About tab, with the running configuration and where the facts come from, is now the Reference tab.
+- Screenshots in the README, and a link to the companion plugin, the Synology Expansion Unit Driver, in the README and on the About tab. No change in what the plugin does.
+
 ###2026.10.26g
 - Published: install and update from GitHub (https://github.com/luuvasara/unraid-synology-hardware). The .plg has its pluginURL, so Unraid's update check sees new versions; the package is downloaded from the repository's packages/ folder and checked against its MD5 before it is installed. The Report tab's "Open GitHub issue" link points to the same repository. No change in what the plugin does.
 
@@ -124,8 +128,18 @@
 <!-- pre-install: dirs, version-preserving cleanup of old packages on flash -->
 <FILE Run="/bin/bash">
 <INLINE>
-mkdir -p /boot/config/plugins/&name;
-ls /boot/config/plugins/&name;/&name;-*-x86_64-1.txz 2>/dev/null | grep -v '&version;' | xargs -r rm -f
+mkdir -p /boot/config/plugins/&name; /var/run/&name;
+OLD=
+for f in /var/log/packages/&name;-*-x86_64-1; do
+  if [ -e "$f" ]; then OLD=${f##*/&name;-}; OLD=${OLD%-x86_64-1}; fi
+done
+if [ -n "$OLD" ]; then echo "update $OLD"
+elif [ -e /boot/config/plugins/&name;.plg ]; then echo boot
+else echo fresh
+fi &gt;/var/run/&name;/install-from
+for f in /boot/config/plugins/&name;/&name;-*-x86_64-1.txz; do
+  case $f in */&name;-&version;-x86_64-1.txz) ;; *) if [ -f "$f" ]; then rm -f "$f"; fi ;; esac
+done
 </INLINE>
 </FILE>
 
@@ -139,6 +153,11 @@ ls /boot/config/plugins/&name;/&name;-*-x86_64-1.txz 2>/dev/null | grep -v '&ver
 <FILE Run="/bin/bash">
 <INLINE>
 /usr/local/emhttp/plugins/&name;/scripts/synohw-postinstall || logger -t &name; "post-install returned $? (ignored)"
+MODE=; OLD=
+read -r MODE OLD 2&gt;/dev/null &lt;/var/run/&name;/install-from
+FIRST_RUN="Settings, Synology Hardware shows both units. Install the Synology Expansion Unit Driver too if a DX1215 is attached." \
+  /usr/local/emhttp/plugins/&name;/kit/install-notes.sh "&version;" "$MODE" "$OLD" || true
+rm -f /var/run/&name;/install-from
 exit 0
 </INLINE>
 </FILE>

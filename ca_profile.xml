@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommunityApplications>
+  <Profile>Synology Hardware for Unraid runs the Synology DS2415+ and DX1215: fans, LEDs, real MAC addresses, temperature history and a hardware overview. Support and questions: the GitHub issues of this repository.</Profile>
+  <Icon>https://raw.githubusercontent.com/luuvasara/unraid-synology-hardware/main/icon.png</Icon>
+  <WebPage>https://github.com/luuvasara/unraid-synology-hardware</WebPage>
+</CommunityApplications>

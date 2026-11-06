@@ -373,7 +373,7 @@ for f in glob.glob(os.path.join(P, "SynologyHW?*.page")):
     kids[m.group(1)] = (os.path.basename(f), h["Title"], body)
 order = ["1", "2", "3", "4", "5", "5a", "6"]
 assert sorted(kids) == sorted(order), sorted(kids)
-assert [kids[i][1] for i in order] == ["Overview", "DS2415+", "DX1215", "History", "Hardware", "Report", "About"], [kids[i][1] for i in order]
+assert [kids[i][1] for i in order] == ["Overview", "DS2415+", "DX1215", "History", "Hardware", "Report", "Reference"], [kids[i][1] for i in order]
 b = open(os.path.join(P, "SynologyHWBadges.page")).read()
 assert b.startswith('Menu="Buttons"\nLink="nav-user"\n---\n') and "$task ?? '') === 'Main'" in b and "MAIN_BADGES" in b, "badge hook"
 kids = {i + 1: kids[k] for i, k in enumerate(order)}

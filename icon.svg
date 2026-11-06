@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Synology Hardware</title>
+  <rect x="8" y="8" width="240" height="240" rx="44" fill="#1f3b57"/>
+  <rect x="21" y="21" width="214" height="214" rx="32" fill="none" stroke="#e2601b" stroke-width="8"/>
+  <rect x="52" y="66" width="152" height="124" rx="14" fill="#ffffff"/>
+  <g fill="#1f3b57">
+    <rect x="66" y="80" width="30" height="16" rx="3"/><rect x="102" y="80" width="30" height="16" rx="3"/>
+    <rect x="66" y="102" width="30" height="16" rx="3"/><rect x="102" y="102" width="30" height="16" rx="3"/>
+  </g>
+  <circle cx="171" cy="128" r="22" fill="#1f3b57"/>
+  <circle cx="171" cy="128" r="6" fill="#ffffff"/>
+  <path d="M171 106 V122 M171 134 V150 M149 128 H165 M177 128 H193" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+  <rect x="66" y="140" width="66" height="10" rx="4" fill="#1f3b57"/>
+  <circle cx="76" cy="172" r="7" fill="#e2601b"/><circle cx="96" cy="172" r="7" fill="#1f3b57"/>
+  <rect x="86" y="190" width="84" height="14" fill="#ffffff"/>
+</svg>

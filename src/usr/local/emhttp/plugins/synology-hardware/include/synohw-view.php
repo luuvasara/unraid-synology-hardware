@@ -203,7 +203,7 @@ function synohw_dx_verdict(array $s): array {
 function synohw_dx_link(array $s): string {
   $x = $s['dx'];
   return $x['plugin_installed'] && $x['plugin_name'] === 'synology-expansion'
-    ? '<a href="/Settings/SynologyExpansion">' . synohw_h('Synology Expansion Unit Driver page') . '</a> (its own checks and raw registers)' : '';
+    ? '<a href="/Utilities/SynologyExpansion">' . synohw_h('Synology Expansion Unit Driver page') . '</a> (its own checks and raw registers)' : '';
 }
 
 /* ---------------- shared facts ---------------- */
