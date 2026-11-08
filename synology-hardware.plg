@@ -1,12 +1,12 @@
 <?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
   <!ENTITY name    "synology-hardware">
-  <!ENTITY version "2026.11.06a">
+  <!ENTITY version "2026.11.09a">
   <!ENTITY gitURL  "https://raw.githubusercontent.com/luuvasara/unraid-synology-hardware/main">
   <!ENTITY pluginURL "&gitURL;/synology-hardware.plg">
   <!ENTITY pkg     "synology-hardware-&version;-x86_64-1.txz">
   <!ENTITY pkgURL  "&gitURL;/packages/&pkg;">
-  <!ENTITY md5     "361547b9b3bd8fb3e531ffb8b08b74b2">
+  <!ENTITY md5     "01467cef7c5980350ed326dbf3622aca">
 ]>
 <!-- Written: 2026-10-24. Hardware support for the Synology DS2415+ (front-panel MCU, fan, LEDs, real MACs).
      Install: Plugins, Install Plugin, https://raw.githubusercontent.com/luuvasara/unraid-synology-hardware/main/synology-hardware.plg
@@ -16,6 +16,9 @@
 <PLUGIN name="&name;" author="synology-hardware project" version="&version;" min="7.0.0" launch="Settings/SynologyHW" icon="synology-hardware.png" pluginURL="&pluginURL;">
 
 <CHANGES>
+###2026.11.09a
+- Main page bay badges now also appear on drives listed under Unassigned Devices. The Unassigned Devices plugin puts a "Clear Disk" link after the drive name, and the badge script did not recognise the drive there, so those drives had no badge. Array and pool drives are unchanged.
+
 ###2026.11.06a
 - New About tab: the installed version and the latest changes, with links, the author and the licence. Install and update now print the latest changes in a box. The old About tab, with the running configuration and where the facts come from, is now the Reference tab.
 - Screenshots in the README, and a link to the companion plugin, the Synology Expansion Unit Driver, in the README and on the About tab. No change in what the plugin does.

@@ -1,7 +1,8 @@
 /* synohw-badges.js - "DS 1" / "DX 8" after each disk's device name on Unraid's Main page (synology-hardware 2026.10.26b).
  * Written: 2026-10-26. Visual only: asks include/bays.php (POST, read-only) which unit and bay each sdX is in, then appends a
  * badge to the device name (the row's first cell) of every table row with a cell ending in "(sdX)" (Unraid's device_desc():
- * "<id> - <size> (sdX)", nchan/device_list); the identification cell itself is clipped with an ellipsis.
+ * "<id> - <size> (sdX)", nchan/device_list), or with a text piece of its own that does (Unassigned Devices rows, 2026.11.09a);
+ * the identification cell itself is clipped with an ellipsis.
  * The Main tables are re-rendered by nchan every few seconds, so a MutationObserver re-adds the badges before the next paint. Fails silently: if the
  * request fails, the reply is odd or no cell matches, nothing is added and nothing is logged. */
 (function (window, document, $) {
@@ -9,6 +10,15 @@
   if (!$ || !window.MutationObserver) return;
   var URL_ = '/plugins/synology-hardware/include/bays.php', map = null, busy = false, pending = null;
   var RE = /\(([a-z]{2,4}[a-z0-9]{0,12})\)\s*$/;
+  /* 2026.11.09a: the "(sdX)" of a cell: at the end of the cell's text (array and pool rows), else at the end of one of its own
+   * text pieces outside links. Unassigned Devices writes "<id> (sdX)" and then a "Clear Disk" link with hidden text, so the
+   * cell's text does not end in "(sdX)" there and those drives got no badge (same fix as unraid-plugin-kit 6344f6a). */
+  function dev(td) {
+    var m = RE.exec(td.textContent || '');
+    if (m) return m;
+    for (var n = td.firstChild; n; n = n.nextSibling) if (n.nodeType === 3 && (m = RE.exec(n.nodeValue || ''))) return m;
+    return null;
+  }
   function apply() {
     pending = null;
     if (!map) return;
@@ -17,7 +27,7 @@
       for (var i = 0; i < cells.length; i++) {
         var td = cells[i], tr = td.parentNode;
         if (!tr || tr.querySelector('.synohw-bay-badge') || td.querySelector('select, input')) continue;
-        var m = RE.exec(td.textContent || '');
+        var m = dev(td);
         if (!m || !Object.prototype.hasOwnProperty.call(map, m[1])) continue;
         var b = map[m[1]];
         if (!b || (b.u !== 'DS' && b.u !== 'DX') || typeof b.bay !== 'number') continue;

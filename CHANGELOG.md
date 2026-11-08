@@ -2,6 +2,9 @@
 
 Copied by the build from the <CHANGES> block of synology-hardware.plg; edit the .plg, not this file.
 
+## 2026.11.09a
+- Main page bay badges now also appear on drives listed under Unassigned Devices. The Unassigned Devices plugin puts a "Clear Disk" link after the drive name, and the badge script did not recognise the drive there, so those drives had no badge. Array and pool drives are unchanged.
+
 ## 2026.11.06a
 - New About tab: the installed version and the latest changes, with links, the author and the licence. Install and update now print the latest changes in a box. The old About tab, with the running configuration and where the facts come from, is now the Reference tab.
 - Screenshots in the README, and a link to the companion plugin, the Synology Expansion Unit Driver, in the README and on the About tab. No change in what the plugin does.

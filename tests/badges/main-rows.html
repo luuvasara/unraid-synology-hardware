@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- Main page rows as Unraid 7.3.4 and Unassigned Devices draw them (cells copied from a real server's Main page, 2026-11-09;
+     ids shortened; the same rows as unraid-plugin-kit tests/badges/main-rows.html). jQuery is stubbed: $(fn) runs fn, $.post
+     answers like include/bays.php. The script under test is BADGES_JS below (run-tests.sh points it at a copy); the result is
+     written into the page for --dump-dom. -->
+<html><head><meta charset="utf-8"><title>badges</title>
+<script>
+window.jQuery = function (f) { if (typeof f === 'function') setTimeout(f, 0); };
+window.jQuery.post = function () {
+  var r = { ok: true, bays: { sdb: { u: 'DS', bay: 1, unit: 'DS2415+' }, sdg: { u: 'DX', bay: 2, unit: 'DX1215' }, sdm: { u: 'DX', bay: 10, unit: 'DX1215' } } };
+  var p = { done: function (f) { setTimeout(function () { f(r); }, 0); return p; }, always: function (f) { setTimeout(f, 0); return p; } };
+  return p;
+};
+</script></head><body>
+<table><tbody>
+<tr id="array"><td><a>Disk 1</a></td><td class="desc"><a class="info hand"><i class="icon-disk icon"></i><span>Disk Log Information</span></a><span style="font-family:bitstream">ST4000DM004-2U9104_X</span> - 4 TB (sdb)</td></tr>
+<tr id="ud"><td><a>Dev 5</a></td><td><a class="info" href="#"><i class="icon-nvme icon partition-log"></i><span>Disk Log Information</span></a><span><i class="fa fa-minus-square fa-append grey-orb orb"></i></span>INTEL_SSDSC2BW120A4_X (sdg)<a device="/dev/sdg" class="exec info"><i class="fa fa-remove clear-hdd"></i><span>Clear Disk</span></a></td></tr>
+<tr id="ud2"><td><a>Dev 1</a></td><td><a class="info" href="#"><span>Disk Log Information</span></a><span class="toggle-hdd" hdd="sdm"></span>ST3000VN006-3CW10G_X (sdm)</td></tr>
+<tr id="other"><td><a>Dev 9</a></td><td><a class="info" href="#"><span>Disk Log Information</span></a>ST4000DM004_X (sdc)<a class="exec info"><span>Clear Disk</span></a></td></tr>
+<tr id="part"><td>1</td><td><a href="#">INTEL_SSDSC2BW120A4_X (sdg) mounted at /mnt/disks/x</a></td></tr>
+</tbody></table>
+<pre id="out"></pre>
+<script src="BADGES_JS"></script>
+<script>setTimeout(function () { document.getElementById('out').textContent = 'RESULT ' + [].map.call(document.querySelectorAll('tr'), function (r) {
+  var b = r.querySelector('.synohw-bay-badge'); return r.id + '=' + (b ? b.textContent.replace(' ', '') + '@' + (b.parentNode === r.cells[0] ? 'name' : 'other') : '-'); }).join(' '); }, 600);</script>
+</body></html>

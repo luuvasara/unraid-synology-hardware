@@ -254,8 +254,26 @@ for f in "$P"/SynologyHW*.page "$P"/include/*.php; do php -l "$f" >/dev/null 2>&
 ok "php -l: the 7 page files, status.php, synohw-status.php, synohw-hw.php, synohw-view.php, synohw-page.php"
 # graphs (2026.10.25f): the page script parses; the vendored uPlot is the exact npm 1.6.32 build with its MIT licence; the page loads
 # nothing from the internet (no http(s):// script/link src)
-if command -v node >/dev/null; then node --check "$P/js/synohw-charts.js" && node --check "$P/js/synohw-page.js" && ok "node --check js/synohw-charts.js js/synohw-page.js" || bad "node --check page scripts"
+if command -v node >/dev/null; then node --check "$P/js/synohw-charts.js" && node --check "$P/js/synohw-page.js" && node --check "$P/js/synohw-badges.js" && ok "node --check js/synohw-charts.js js/synohw-page.js js/synohw-badges.js" || bad "node --check page scripts"
 else echo "SKIP node --check (node not installed)"; fi
+# 2026.11.09a: Main page badges on rows copied from a real Main page (array row, Unassigned Devices rows with and without the
+# "Clear Disk" link, a drive in no bay, a partition row), in headless Chrome; then the same page with the old matcher (whole cell
+# text only) must lose the Unassigned Devices badge, or the check proves nothing
+if command -v google-chrome >/dev/null; then
+  badges_run() {   # $1 = badge script to load; prints the RESULT line
+    local d; d=$(mktemp -d "$SCRATCH/badges.XXXX"); cp "$1" "$d/b.js"; sed 's|BADGES_JS|b.js|' "$T/badges/main-rows.html" >"$d/t.html"
+    timeout 60 google-chrome --headless=new --disable-gpu --no-sandbox --user-data-dir="$d/prof" --allow-file-access-from-files \
+      --virtual-time-budget=3000 --dump-dom "file://$d/t.html" 2>/dev/null | grep -o 'RESULT [a-z]*=[^<]*'; }
+  want="RESULT array=DS1@name ud=DX2@name ud2=DX10@name other=- part=-"
+  r=$(badges_run "$P/js/synohw-badges.js")
+  if [ "$r" = "$want" ]; then ok "Main page badges: array and Unassigned Devices rows, next to the name; not on partition rows or drives in no bay"
+  else bad "Main page badges: $r"; fi
+  sed "s/var m = dev(td);/var m = RE.exec(td.textContent || '');/" "$P/js/synohw-badges.js" >"$SCRATCH/badges-old.js"
+  r=$(badges_run "$SCRATCH/badges-old.js")
+  if ! grep -q 'var m = dev(td)' "$SCRATCH/badges-old.js" && [ "$r" = "RESULT array=DS1@name ud=- ud2=DX10@name other=- part=-" ]; then
+    ok "Main page badges control: the old whole-cell matcher still badges the array row but misses the Unassigned Devices row with Clear Disk"
+  else bad "Main page badges control: $r"; fi
+else echo "SKIP Main page badges (no google-chrome)"; fi
 U=$P/vendor/uplot-1.6.32
 { head -c 60 "$U/uPlot.iife.min.js" | grep -q 'uPlot (v1.6.32)' && grep -q 'The MIT License' "$U/LICENSE" && [ -s "$U/uPlot.min.css" ] \
   && [ "$(sha256sum <"$U/uPlot.iife.min.js" | cut -d' ' -f1)" = "$(sed -n 's/^sha256 uPlot.iife.min.js //p' "$U/SOURCE")" ]; } \
