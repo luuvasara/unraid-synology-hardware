@@ -21,6 +21,10 @@ d, sc = sys.argv[1], sys.argv[2]
 # no drawing for (module reports DX517, unique 0x15): the Overview shows plain unit pictures, every value still in the tables.
 unknown = sc == "unknown"
 if unknown: sc = "normal"
+# 2026.11.20a "dxstandby": normal, but the DX1215 is switched off with mains power (standby), as measured on 2026-11-20: the
+# master port multiplier answers (model DX1215, unique 0x13), power_on 0, and no disk of the unit is visible.
+dxstandby = sc == "dxstandby"
+if dxstandby: sc = "normal"
 now = int(time.time())
 def w(p, s, mode=None):
     p = os.path.join(d, p); os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -30,6 +34,7 @@ os.makedirs(os.path.join(d, run), exist_ok=True)
 hot = sc == "hot"
 disks = [("parity", "sdb", 47 if hot else 38), ("disk1", "sdc", 55 if hot else 36), ("disk2", "sdd", "*"),
          ("disk3", "sde", 50 if hot else 41), ("disk4", "sdf", "*")]
+if dxstandby: disks = disks[:3]
 ini = '["flash"]\nname="flash"\ndevice="sda"\ntemp="*"\n'
 for n, dev, t in disks:
     ini += f'["{n}"]\nname="{n}"\ndevice="{dev}"\nid="WDC_WD40EFRX-68N32N0_WD-WCC7K0000{dev[-1]}"\ntemp="{t}"\nspundown="{1 if t == "*" else 0}"\nrotational="1"\ntransport="ata"\nstatus="DISK_OK"\n'
@@ -192,7 +197,7 @@ if sc in ("normal", "hot", "crashed", "stopped", "measured", "graphs", "nodx", "
         w(f"{run}/sweep.state", f"state=done\nplan=20 15 12 10\nsteps=4\nstep=4\nduty=10\nstarted={sw0}\nupdated={last}\nstep_started={last - 1170}\nhold=1200\nmin_hold=600\nmax_hold=1800\nsettled=yes\nsamples={len(rows) - 1}\ntemps=cpu=44\nreason=plan complete\ncsv=/var/run/synology-hardware/sweep.csv\nsummary=/var/run/synology-hardware/sweep-summary.txt\nresult_csv=\nresult_txt=\n")
 if dxmod or sc == "stopped":   # the synology-dx module (0.4.0): unit values as measured (phase 2a/2b), master host18
     u = dict(master_host="host18", unique="0x15" if unknown else "0x13", model="DX517" if unknown else "DX1215", fan_level=dxlv if dxmod else "low", fan_code={"full": 0, "middle": 1, "low": 2}[dxlv] if dxmod else 2,
-             fan_fail=1 if dxal else 0, fan1_fail=1 if dxal else 0, fan2_fail=0, power_on=1, psu1=0, psu2=0, switch_mode=1, last_error="", fan_stop_test_s=0)
+             fan_fail=1 if dxal else 0, fan1_fail=1 if dxal else 0, fan2_fail=0, power_on=0 if dxstandby else 1, psu1=0, psu2=0, switch_mode=1, last_error="", fan_stop_test_s=0)
     for k, v in u.items(): w(f"sys/kernel/synology_dx/unit/{k}", f"{v}\n")
     w("sys/kernel/synology_dx/unit/summary", "".join(f"{k} {v if v != '' else '-'}\n" for k, v in u.items()))
     for k, v in (("version", "0.4.0"), ("srcversion", "A1B2C3D4E5F6A7B8C9D0E1F"), ("parameters/refresh_s", "30"), ("parameters/hosts", "18,19,20,21")):

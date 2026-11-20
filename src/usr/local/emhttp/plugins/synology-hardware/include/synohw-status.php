@@ -914,8 +914,8 @@ function synohw_dx_rows(array $s): array {
           . " <span class=\"grey-text\">(page 2 bit " . ((int)$n - 1) . '; a 30 s STOP test raised both bits within 5 s, phase 2b; DSM itself checks only bit 0)</span>');
       }
       $po = (string)($v['power_on'] ?? '?');
-      $row('Power', ($po === '1' ? synohw_orb('green') . 'on (power_on 1)' : synohw_orb('yellow') . '<span class="orange-text">power_on ' . synohw_h($po) . '</span>')
-        . ' <span class="grey-text">(page 2 bit 5, DSM IsPowerOn; Synology\'s GPL code treats the bit clear as "PSU off")</span>');
+      $row('Power', ($po === '1' ? synohw_orb('green') . 'on (power_on 1)' : ($po === '0' ? synohw_orb('blue') . '<span class="blue-text">standby (power_on 0): the unit is connected and has mains power, but is switched off</span>' : synohw_orb('yellow') . '<span class="orange-text">power_on ' . synohw_h($po) . '</span>'))
+        . ' <span class="grey-text">(page 2 bit 5, DSM IsPowerOn. Measured on this unit: 1 when switched on; 0 in standby, where only the master port multiplier answers and no bay has power, so the unit\'s disks are missing from Unraid until its power button is pressed; 2026-11-20)</span>');
       $row('PSU 1 / PSU 2', 'raw bits ' . synohw_h($v['psu1'] ?? '?') . ' / ' . synohw_h($v['psu2'] ?? '?')
         . ' <span class="grey-text">(page 2 bits 6 and 7, DSM RedundantPowerStatGet). <b>Polarity unknown</b>: the DX1215 has one PSU and both bits read 0 on this unit, so which value means "OK" is not known.</span>');
       $row('Switch mode', synohw_h(synohw_switch_text((string)($v['switch_mode'] ?? '?')))

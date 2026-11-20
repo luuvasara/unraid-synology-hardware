@@ -2,6 +2,9 @@
 
 Copied by the build from the <CHANGES> block of synology-hardware.plg; edit the .plg, not this file.
 
+## 2026.11.20b
+- Expansion unit in standby: a DX1215 that is connected and has mains power but is switched off is now shown as "DX1215 connected, but switched off (standby)" in blue on the Overview card, in the health block and on the DX1215 tab, with what to do (press the unit's power button). Before, it read "found and responding" in green with "power_on 0" in orange, while every disk in the unit was missing from Unraid. Detected from the unit's power bit (status page 2 bit 5, read by the expansion driver from the master port multiplier, which still answers in standby); measured on the DS2415+/DX1215 on 2026-11-20: 0 in standby, 1 when switched on. The drawing shows the DX1215 fans as off (standby) instead of spinning, and the fan level line says that the daemon sets the level again once the unit is switched on (it reads the unit every minute). Fan control is unchanged: the daemon keeps writing the wanted level to the unit.
+
 ## 2026.11.09a
 - Main page bay badges now also appear on drives listed under Unassigned Devices. The Unassigned Devices plugin puts a "Clear Disk" link after the drive name, and the badge script did not recognise the drive there, so those drives had no badge. Array and pool drives are unchanged.
 

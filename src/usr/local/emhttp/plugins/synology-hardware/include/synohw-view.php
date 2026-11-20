@@ -185,6 +185,20 @@ function synohw_badge(string $box, ?array $s = null, bool $long = false): string
 
 /* ---------------- expansion driver verdict (cheap: no unit/summary read, no host summaries) ---------------- */
 
+/* 2026.11.20a: standby = the module identifies the unit (a fan level is readable from its master port multiplier) and the unit's
+ * power bit reads 0: mains power and cable present, unit switched off. Measured on the DS2415+/DX1215 on 2026-11-20 (only the
+ * master port multiplier answers, no disk; switched on, the bit reads 1). A missing or unreadable bit is never called standby. */
+function synohw_dx_standby(array $s): bool {
+  $x = $s['dx']; $v = $x['v'];
+  return $x['loaded'] && in_array($v['fan_level'] ?? '', ['full', 'middle', 'low', 'stop'], true) && (string)($v['power_on'] ?? '') === '0';
+}
+/* the Power value, shared by the Overview card and the DX tab */
+function synohw_dx_power_html(string $po): string {
+  if ($po === '1') return synohw_orb('green') . 'on';
+  if ($po === '0') return synohw_orb('blue') . '<span class="blue-text">standby: connected and has mains power, but switched off</span>';
+  return synohw_orb('yellow') . '<span class="orange-text">power_on ' . synohw_h($po) . '</span>';
+}
+
 /* [orb colour, headline, reason]; the expansion plugin's own page (sdx_verdict) has the full checklist */
 function synohw_dx_verdict(array $s): array {
   $x = $s['dx']; $v = $x['v'];
@@ -196,6 +210,8 @@ function synohw_dx_verdict(array $s): array {
   if (!in_array($lvl, ['full', 'middle', 'low', 'stop'], true)) return ['yellow', 'Driver loaded, unit not identified', 'No single port multiplier answered as the unit master (EMID 0). Fan control is disabled.'];
   $a1 = ($v['fan1_fail'] ?? '') === '1'; $a2 = ($v['fan2_fail'] ?? '') === '1';
   if ($a1 || $a2) return ['red', 'Driver loaded: FAN ALARM', 'The unit reports ' . ($a1 && $a2 ? 'both fans' : ($a1 ? 'fan 1' : 'fan 2')) . ' as failed (stopped or blocked).'];
+  if (synohw_dx_standby($s)) return ['blue', synohw_box_name($s, 'dx') . ' connected, but switched off (standby)',
+    'The unit has mains power and its cable is connected (its master port multiplier answers, power bit 0), but its bays have no power, so its disks are not visible to Unraid. Press the power button on the unit to switch it on.'];
   $le = (string)($v['last_error'] ?? '');
   if ($le !== '' && $le !== '-' && $le !== '?') return ['yellow', 'Driver loaded, with an error', 'Last module error: ' . $le];
   return ['green', 'Driver loaded: ' . synohw_box_name($s, 'dx') . ' found and responding', 'Values from ' . ($x['src'] === 'daemon' ? "the daemon's copy" : 'sysfs') . '.'];
@@ -270,10 +286,11 @@ function synohw_render_ov_ds(array $s): string {
 function synohw_render_ov_dx(array $s): string {
   $st = $s['daemon']['state'] ?? []; $x = $s['dx']; $v = $x['v']; $r = [];
   [$c, $head, $why] = synohw_dx_verdict($s);
-  $r['Driver'] = synohw_orb($c) . '<span class="' . ['green' => '', 'grey' => 'grey-text', 'yellow' => 'orange-text', 'red' => 'red-text'][$c] . '">' . synohw_h($head) . '</span>';
+  $r['Driver'] = synohw_orb($c) . '<span class="' . ['green' => '', 'grey' => 'grey-text', 'yellow' => 'orange-text', 'red' => 'red-text', 'blue' => 'blue-text'][$c] . '">' . synohw_h($head) . '</span>';
   if (synohw_dx_controlled($s)) {
     $r['Fan mode'] = synohw_h($st['dx_mode'] ?? '?') . (($st['dx_mode'] ?? '') === 'MANUAL' ? ' ' . synohw_h($st['dx_cfg_level'] ?? '') : '');
-    $r['Fan level'] = '<b>' . synohw_h($st['dx_level'] ?? '?') . '</b> <span class="grey-text">(wanted ' . synohw_h($st['dx_want'] ?? '?') . '; a 2-bit level, no RPM exists)</span>';
+    $r['Fan level'] = '<b>' . synohw_h($st['dx_level'] ?? '?') . '</b> <span class="grey-text">(wanted ' . synohw_h($st['dx_want'] ?? '?') . '; a 2-bit level, no RPM exists)</span>'
+      . (synohw_dx_standby($s) ? ' <span class="blue-text">the unit is switched off; the daemon reads the unit every minute and sets the level again once it is switched on</span>' : '');
     $r['Why'] = synohw_h(SYNOHW_DX_WHY[$st['dx_why'] ?? ''] ?? 'starting');
   } else {
     $r['Fan'] = '<span class="grey-text">not controlled' . (!$s['daemon']['running'] ? ' (daemon not running)' : (isset($st['dx_why']) ? ': ' . synohw_h(SYNOHW_DX_WHY[$st['dx_why']] ?? $st['dx_why']) : '')) . '; the unit keeps its level</span>'
@@ -288,7 +305,7 @@ function synohw_render_ov_dx(array $s): string {
     }
     $r['Fan alarms'] = implode(' &nbsp; ', $al);
     $po = (string)($v['power_on'] ?? '?');
-    $r['Power'] = $po === '1' ? synohw_orb('green') . 'on' : synohw_orb('yellow') . '<span class="orange-text">power_on ' . synohw_h($po) . '</span>';
+    $r['Power'] = synohw_dx_power_html($po);
   }
   $lk = synohw_dx_link($s);
   if ($lk !== '') $r['Driver details'] = $lk;
@@ -601,7 +618,7 @@ function synohw_render_diagram(array $s): string {
     $a1 = ((string)($v['fan1_fail'] ?? '')) === '1'; $a2 = ((string)($v['fan2_fail'] ?? '')) === '1';
     $led = ['status' => ['synohw-led-off', 'STATUS LED: not read (this plugin does not read or set the DX1215 STATUS LED)'],
             'alert' => [$a1 || $a2 ? 'synohw-led-red synohw-anim synohw-blink' : 'synohw-led-off', 'ALERT LED: ' . ($a1 || $a2 ? 'expected red, blinking: a fan alarm bit is set' : 'expected off: no fan alarm bit') . ' (the LED itself is not read)'],
-            'power' => [$po === '1' ? 'synohw-led-blue-stroke' : 'synohw-led-off-stroke', 'POWER button: ' . ($po === '1' ? 'lit blue (power_on bit 1)' : "power_on bit $po")],
+            'power' => [$po === '1' ? 'synohw-led-blue-stroke' : 'synohw-led-off-stroke', 'POWER button: ' . ($po === '1' ? 'lit blue (power_on bit 1)' : ($po === '0' ? 'the unit is switched off (standby: power_on bit 0, mains power and cable present)' : "power_on bit $po"))],
             'win' => [1 => [$link ? 'synohw-led-green' : 'synohw-led-off', 'LINK LED: ' . ($link ? 'expected green: the unit answers over the cable' : 'expected off: no link seen') . ' (the LED itself is not read)']]];
     $svg .= '<g class="synohw-unit-dx">' . synohw_svg_text($fx, 18, $md['name'], 'synohw-svg-title') . synohw_svg_text($fx + 66, 18, 'expansion unit', 'synohw-svg-muted')
       . synohw_svg_text($fx + 4, 31, 'front', 'synohw-svg-muted synohw-svg-small') . synohw_svg_text($rx + 4, 31, 'rear (seen from behind)', 'synohw-svg-muted synohw-svg-small');
@@ -609,7 +626,7 @@ function synohw_render_diagram(array $s): string {
     $per = ['low' => 2.0, 'middle' => 1.2, 'full' => 0.6][$lvl] ?? null;
     $fans = [];
     for ($i = 0; $i < $md['fans']; $i++) { $al = $i === 0 ? $a1 : $a2;
-      $fans[] = [$lvl === 'stop' ? null : $per, $al, 'fan ' . ($i + 1) . ($al ? ': ALARM' : ''), $al ? 'stopped or blocked' : ($lvl === 'stop' ? 'STOP' : ($lvl ?: '?'))]; }
+      $fans[] = [$lvl === 'stop' || $po === '0' ? null : $per, $al, 'fan ' . ($i + 1) . ($al ? ': ALARM' : ''), $al ? 'stopped or blocked' : ($po === '0' ? 'off (standby)' : ($lvl === 'stop' ? 'STOP' : ($lvl ?: '?')))]; }
     $svg .= synohw_svg_rear_body($rx, $Y, $fans);
     $c0 = $rx + 202;
     $svg .= '<g><title>Expansion port (from the DS2415+)</title><rect x="' . ($rx + 214) . '" y="' . ($Y + 56) . '" width="18" height="28" rx="4" class="synohw-port"/>'

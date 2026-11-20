@@ -246,7 +246,7 @@ PY
 
 # --- settings page: live status library + endpoint (fixtures with fake MACs/serial, tests/mkfixture.py) ---
 P=$SRC/usr/local/emhttp/plugins/synology-hardware; FX=$SCRATCH/fx; mkdir -p "$FX"
-for sc in normal stopped notty crashed hot measured graphs nodx dxalarm unknown; do python3 -I "$T/mkfixture.py" "$FX/$sc" "$sc" >"$FX/ov-$sc.json" || bad "fixture $sc"; done
+for sc in normal stopped notty crashed hot measured graphs nodx dxalarm unknown dxstandby; do python3 -I "$T/mkfixture.py" "$FX/$sc" "$sc" >"$FX/ov-$sc.json" || bad "fixture $sc"; done
 php -d error_reporting=-1 "$T/status_test.php" "$P" "$FX" && ok "status page tests" || bad "status page tests"
 # 2026.10.26b: hardware report anonymiser (planted values), report endpoint, the collector on this machine
 mkdir -p "$SCRATCH/rep"; SYNOHW_UEFI1_FIXTURE=$T/fixtures/uefi1-ds2415p.bin php -d error_reporting=-1 "$T/report_test.php" "$P" "$SCRATCH/rep" && ok "report tests" || bad "report tests"

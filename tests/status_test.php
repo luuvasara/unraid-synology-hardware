@@ -461,5 +461,21 @@ ok('26b issues: cache values are escaped', strpos($hi, '<script>x') === false &&
 
 // tables: dump for the shell-side comparison with scemd.xml and synohw-lib.sh
 file_put_contents("$root/php-tables.json", json_encode(SYNOHW_TABLES));
+// ---- DX1215 switched off with mains power (standby), 2026.11.20a: fixture "dxstandby" = the values measured on 2026-11-20 ----
+[$s, $h] = render('dxstandby');
+ok('dx standby: synohw_dx_standby() true; blue verdict "DX1215 connected, but switched off (standby)" on the Overview card, the health block and the DX tab, never "found and responding"',
+   synohw_dx_standby($s) === true && synohw_dx_verdict($s)[0] === 'blue' && strpos($h['ov_dx'], 'blue-orb') !== false && strpos($h['ov_dx'], '<span class="blue-text">DX1215 connected, but switched off (standby)</span>') !== false
+   && strpos($h['dx_driver'], 'DX1215 connected, but switched off (standby).') !== false && strpos($h['dx_driver'], 'Press the power button on the unit') !== false
+   && strpos($h['health'], 'blue-orb') !== false && strpos($h['health'], 'DX1215 connected, but switched off (standby)') !== false
+   && strpos($h['ov_dx'] . $h['dx'] . $h['dx_driver'] . $h['health'], 'found and responding') === false, $h['dx_driver']);
+ok('dx standby: Power says standby in both places, with the measured meaning of the bit', strpos($h['ov_dx'], 'standby: connected and has mains power, but switched off') !== false
+   && strpos($h['dx'], 'standby (power_on 0): the unit is connected and has mains power, but is switched off') !== false && strpos($h['dx'], '0 in standby') !== false && strpos($h['dx'], 'on (power_on 1)') === false, $h['dx']);
+ok('dx standby: diagram draws the DX fans not spinning with "off (standby)", POWER button says switched off; the DS fans still spin',
+   substr_count($h['diagram'], 'off (standby)') === 2 && strpos($h['diagram'], 'the unit is switched off (standby: power_on bit 0') !== false && substr_count($h['diagram'], '--synohw-spin:2.40s') === 2 && strpos($h['diagram'], '--synohw-spin:2.00s') === false, '');
+[$s, $h] = render('normal');
+ok('dx on (normal): not standby, green verdict, no "switched off" text anywhere', synohw_dx_standby($s) === false && synohw_dx_verdict($s)[0] === 'green' && strpos($h['ov_dx'] . $h['dx'] . $h['dx_driver'] . $h['health'] . $h['diagram'], 'switched off') === false, $h['ov_dx']);
+[$s, $h] = render('nodx');
+ok('no driver: never called standby', synohw_dx_standby($s) === false && strpos($h['ov_dx'] . $h['dx'], 'standby)') === false, $h['ov_dx']);
+
 ok('no PHP notice or warning in the status library', !$warnings, implode('; ', array_slice($warnings, 0, 5)));
 exit($fails ? 1 : 0);

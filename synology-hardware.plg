@@ -1,12 +1,12 @@
 <?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
   <!ENTITY name    "synology-hardware">
-  <!ENTITY version "2026.11.09a">
+  <!ENTITY version "2026.11.20b">
   <!ENTITY gitURL  "https://raw.githubusercontent.com/luuvasara/unraid-synology-hardware/main">
   <!ENTITY pluginURL "&gitURL;/synology-hardware.plg">
   <!ENTITY pkg     "synology-hardware-&version;-x86_64-1.txz">
   <!ENTITY pkgURL  "&gitURL;/packages/&pkg;">
-  <!ENTITY md5     "01467cef7c5980350ed326dbf3622aca">
+  <!ENTITY md5     "d93ef305122e0402add0c9ce288fe89a">
 ]>
 <!-- Written: 2026-10-24. Hardware support for the Synology DS2415+ (front-panel MCU, fan, LEDs, real MACs).
      Install: Plugins, Install Plugin, https://raw.githubusercontent.com/luuvasara/unraid-synology-hardware/main/synology-hardware.plg
@@ -16,6 +16,9 @@
 <PLUGIN name="&name;" author="synology-hardware project" version="&version;" min="7.0.0" launch="Settings/SynologyHW" icon="synology-hardware.png" pluginURL="&pluginURL;">
 
 <CHANGES>
+###2026.11.20b
+- Expansion unit in standby: a DX1215 that is connected and has mains power but is switched off is now shown as "DX1215 connected, but switched off (standby)" in blue on the Overview card, in the health block and on the DX1215 tab, with what to do (press the unit's power button). Before, it read "found and responding" in green with "power_on 0" in orange, while every disk in the unit was missing from Unraid. Detected from the unit's power bit (status page 2 bit 5, read by the expansion driver from the master port multiplier, which still answers in standby); measured on the DS2415+/DX1215 on 2026-11-20: 0 in standby, 1 when switched on. The drawing shows the DX1215 fans as off (standby) instead of spinning, and the fan level line says that the daemon sets the level again once the unit is switched on (it reads the unit every minute). Fan control is unchanged: the daemon keeps writing the wanted level to the unit.
+
 ###2026.11.09a
 - Main page bay badges now also appear on drives listed under Unassigned Devices. The Unassigned Devices plugin puts a "Clear Disk" link after the drive name, and the badge script did not recognise the drive there, so those drives had no badge. Array and pool drives are unchanged.
 
